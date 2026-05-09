@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Plus } from "lucide-react";
 import { PageHeader } from "@/app/layout";
+import { ArchiveConfirmDialog } from "@/components/archive/ArchiveConfirmDialog";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { ReservationCalendarView } from "@/pages/reservations/components/ReservationCalendarView";
@@ -18,6 +19,7 @@ import {
 } from "@/pages/reservations/components/reservationViewUtils";
 import { ReservationForm } from "@/pages/reservations/ReservationForm";
 import { generateContract } from "@/services/contract.service";
+import { archiveItem } from "@/services/archiveService";
 import { getCars } from "@/services/car.service";
 import { getClients } from "@/services/client.service";
 import { getPayments } from "@/services/payment.service";
@@ -57,6 +59,8 @@ export function ReservationsPage() {
   const [weekStartDate, setWeekStartDate] = useState(() => getStartOfWeek(new Date()));
   const [selectedReservationId, setSelectedReservationId] = useState<number | null>(null);
   const [editingReservation, setEditingReservation] = useState<Reservation | null>(null);
+  const [archiveReservation, setArchiveReservation] = useState<Reservation | null>(null);
+  const [archiveLoading, setArchiveLoading] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { push } = useNotifications();
@@ -181,6 +185,44 @@ export function ReservationsPage() {
     }
   }
 
+  async function handleArchiveReservation(reason?: string) {
+    if (!archiveReservation) return;
+    try {
+      setArchiveLoading(true);
+      await archiveItem({ id: archiveReservation.id, reason, type: "reservation" });
+      setArchiveReservation(null);
+      setSelectedReservationId(null);
+      await reload();
+      showToast({ title: "Réservation archivée avec succès", type: "success" });
+    } catch (caught) {
+      const message = getErrorMessage(caught);
+      showToast({
+        message,
+        title: message.includes("active ou à venir") ? "Impossible d'archiver une réservation active ou à venir" : "Impossible d'archiver cet élément",
+        type: "error",
+      });
+    } finally {
+      setArchiveLoading(false);
+    }
+  }
+
+  async function handleBulkArchiveReservations(selectedReservations: Reservation[]) {
+    const archivable = selectedReservations.filter((reservation) => isArchivableReservationStatus(reservation.status));
+    let archived = 0;
+
+    for (const reservation of archivable) {
+      try {
+        await archiveItem({ id: reservation.id, type: "reservation" });
+        archived += 1;
+      } catch {
+        // Count failed archive attempts as ignored in the user-facing summary.
+      }
+    }
+
+    await reload();
+    showToast({ message: `${archived} réservations archivées, ${selectedReservations.length - archived} ignorées`, title: "Archivage sélection", type: "success" });
+  }
+
   const openCreateDialog = () => {
     setError(null);
     setCreateOpen(true);
@@ -245,6 +287,8 @@ export function ReservationsPage() {
           filters={filters}
           items={filteredItems}
           onCreate={openCreateDialog}
+          onArchive={setArchiveReservation}
+          onArchiveSelected={handleBulkArchiveReservations}
           onEdit={beginEdit}
           onFiltersChange={setFilters}
           onSelect={(reservation) => setSelectedReservationId(reservation.id)}
@@ -289,8 +333,21 @@ export function ReservationsPage() {
           )}
         </DialogContent>
       </Dialog>
+
+      <ArchiveConfirmDialog
+        itemTitle={archiveReservation ? `Réservation #${archiveReservation.id}` : "Réservation"}
+        itemType="reservation"
+        loading={archiveLoading}
+        onCancel={() => !archiveLoading && setArchiveReservation(null)}
+        onConfirm={(reason) => void handleArchiveReservation(reason)}
+        open={Boolean(archiveReservation)}
+      />
     </div>
   );
+}
+
+function isArchivableReservationStatus(status: Reservation["status"]) {
+  return status === "COMPLETED" || status === "CANCELLED";
 }
 
 function readStoredViewMode(): ReservationViewMode {

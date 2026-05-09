@@ -1,13 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
+  CalendarDays,
   Car as CarIcon,
   CheckCircle2,
-  ChevronLeft,
-  ChevronRight,
+  CircleDollarSign,
   Eye,
   Fuel,
-  MoreVertical,
   Pencil,
   Plus,
   Search,
@@ -18,9 +17,12 @@ import {
 } from "lucide-react";
 import { getStatusLabel, StatusBadge } from "@/components/StatusBadge";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { ActionIconButton } from "@/components/ui/action-buttons/ActionIconButton";
+import { AppPagination } from "@/components/ui/pagination/AppPagination";
+import { Dialog, DialogClose, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { SearchableSelect } from "@/components/ui/SearchableSelect";
 import { CarForm } from "@/pages/cars/CarForm";
 import { createCar, deleteCar, getCars, updateCar } from "@/services/car.service";
 import { getReservations, updateReservationStatus } from "@/services/reservation.service";
@@ -38,10 +40,13 @@ import { formatShortPeriod } from "@/utils/date";
 import { formatMoney } from "@/utils/money";
 import { useNotifications } from "@/hooks/useNotifications";
 import { useToast } from "@/hooks/useToast";
+import { readStoredPageSize, writeStoredPageSize } from "@/lib/pagination";
 
 const statuses: Array<"ALL" | CarStatus> = ["ALL", "AVAILABLE", "RENTED", "MAINTENANCE", "UNAVAILABLE"];
 const fuelLevels = ["Plein", "3/4", "1/2", "1/4", "Vide"];
-const pageSizes = [5, 10, 15, 25];
+const carsPageSizeKey = "massar-pagination-page-size-cars";
+const carStatusFilterOptions = statuses.map((item) => ({ value: item, label: item === "ALL" ? "Tous les statuts" : getStatusLabel(item) }));
+const fuelLevelOptions = fuelLevels.map((level) => ({ value: level, label: level }));
 
 export function CarsPage() {
   const [cars, setCars] = useState<Car[]>([]);
@@ -49,7 +54,7 @@ export function CarsPage() {
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState<"ALL" | CarStatus>("ALL");
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(10);
+  const [pageSize, setPageSize] = useState(() => readStoredPageSize(carsPageSizeKey));
   const [open, setOpen] = useState(false);
   const [editingCar, setEditingCar] = useState<Car | null>(null);
   const [detailsCar, setDetailsCar] = useState<Car | null>(null);
@@ -146,8 +151,6 @@ export function CarsPage() {
   const totalPages = Math.max(1, Math.ceil(filteredCars.length / pageSize));
   const safePage = Math.min(page, totalPages);
   const paginatedCars = filteredCars.slice((safePage - 1) * pageSize, safePage * pageSize);
-  const firstItem = filteredCars.length ? (safePage - 1) * pageSize + 1 : 0;
-  const lastItem = Math.min(safePage * pageSize, filteredCars.length);
   const selectedCarIdsSet = useMemo(() => new Set(selectedCarIds), [selectedCarIds]);
   const selectedCars = useMemo(() => cars.filter((car) => selectedCarIdsSet.has(car.id)), [cars, selectedCarIdsSet]);
   const visibleCarIds = paginatedCars.map((car) => car.id);
@@ -162,6 +165,11 @@ export function CarsPage() {
       if (allVisibleCarsSelected) return current.filter((id) => !visibleCarIds.includes(id));
       return Array.from(new Set([...current, ...visibleCarIds]));
     });
+  }
+
+  function handlePageSizeChange(nextPageSize: number) {
+    setPageSize(nextPageSize);
+    writeStoredPageSize(carsPageSizeKey, nextPageSize);
   }
 
   async function handleSubmit(data: CreateCarDto) {
@@ -264,7 +272,13 @@ export function CarsPage() {
     }
   }
 
-  const detailsHistory = reservations.filter((reservation) => reservation.carId === detailsCar?.id);
+  const detailsHistory = useMemo(
+    () =>
+      reservations
+        .filter((reservation) => reservation.carId === detailsCar?.id)
+        .sort((left, right) => new Date(right.startDate).getTime() - new Date(left.startDate).getTime()),
+    [detailsCar?.id, reservations],
+  );
 
   return (
     <>
@@ -336,17 +350,13 @@ export function CarsPage() {
               value={query}
             />
           </div>
-          <select
-            className="h-11 rounded-lg border border-slate-200 bg-white px-4 text-sm text-slate-600 shadow-sm outline-none transition-smooth focus:ring-2 focus:ring-ring focus:ring-offset-2"
-            onChange={(event) => setStatus(event.target.value as "ALL" | CarStatus)}
+          <SearchableSelect
+            ariaLabel="Filtrer les voitures par statut"
+            className="h-11 rounded-lg border-slate-200 text-slate-600"
+            onValueChange={(nextValue) => setStatus(nextValue as "ALL" | CarStatus)}
+            options={carStatusFilterOptions}
             value={status}
-          >
-            {statuses.map((item) => (
-              <option key={item} value={item}>
-                {item === "ALL" ? "Tous les statuts" : getStatusLabel(item)}
-              </option>
-            ))}
-          </select>
+          />
           <div className="relative">
             <Button
               className="h-11 w-full rounded-lg border-slate-200 bg-white px-5 shadow-sm"
@@ -465,52 +475,83 @@ export function CarsPage() {
           </div>
         </div>
 
-        <div className="flex flex-col gap-3 text-sm text-muted-foreground xl:flex-row xl:items-center xl:justify-between">
-          <p>
-            Affichage de {firstItem} à {lastItem} sur {filteredCars.length} voitures
-            {selectedCarIds.length > 0 ? ` · ${selectedCarIds.length} sélectionnée${selectedCarIds.length > 1 ? "s" : ""}` : ""}
+        {selectedCarIds.length > 0 && (
+          <p className="text-sm text-muted-foreground">
+            {selectedCarIds.length} sélectionnée{selectedCarIds.length > 1 ? "s" : ""}
           </p>
-          <div className="flex flex-wrap items-center gap-3 xl:justify-end">
-            <Pagination currentPage={safePage} onPageChange={setPage} totalPages={totalPages} />
-            <select
-              className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-600 shadow-sm outline-none transition-smooth focus:ring-2 focus:ring-ring focus:ring-offset-2"
-              onChange={(event) => setPageSize(Number(event.target.value))}
-              value={pageSize}
-            >
-              {pageSizes.map((size) => (
-                <option key={size} value={size}>
-                  {size} / page
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
+        )}
+        <AppPagination
+          currentPage={safePage}
+          onPageChange={setPage}
+          onPageSizeChange={handlePageSizeChange}
+          pageSize={pageSize}
+          totalItems={filteredCars.length}
+          totalPages={totalPages}
+        />
       </div>
 
       <Dialog onOpenChange={(value) => !value && setDetailsCar(null)} open={Boolean(detailsCar)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Historique de location</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-3">
-            <p className="text-sm font-medium">
-              {formatCarName(detailsCar?.brand, detailsCar?.model)} - {formatRegistrationNumber(detailsCar?.registrationNumber)}
+        <DialogContent
+          aria-label="Historique des réservations de la voiture"
+          className="flex max-h-[92vh] w-[calc(100vw-24px)] max-w-[1100px] flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white p-0 shadow-2xl data-[state=open]:animate-[scale-in-center_200ms_ease-out] data-[state=closed]:animate-[scale-out-center_160ms_ease-in] sm:max-h-[85vh] sm:w-[min(92vw,1000px)] dark:border-slate-800 dark:bg-slate-950"
+        >
+          <DialogHeader className="sticky top-0 z-20 mb-0 border-b border-slate-200 bg-white/95 px-6 py-5 pr-20 backdrop-blur dark:border-slate-800 dark:bg-slate-950/95">
+            <DialogTitle className="text-xl font-semibold tracking-normal text-slate-950 dark:text-slate-100">
+              Historique de location
+            </DialogTitle>
+            <p className="text-sm text-muted-foreground dark:text-slate-400">
+              {detailsCar
+                ? `${formatCarName(detailsCar.brand, detailsCar.model)} - ${formatRegistrationNumber(detailsCar.registrationNumber)}`
+                : "Réservations de la voiture"}
             </p>
+          </DialogHeader>
+          <div className="modal-scrollbar flex-1 space-y-6 overflow-y-auto p-6" aria-label="Liste des réservations" tabIndex={0}>
             {detailsHistory.length === 0 ? (
-              <p className="text-sm text-muted-foreground">Aucune location pour cette voiture.</p>
+              <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-8 text-center dark:border-slate-700 dark:bg-slate-900">
+                <p className="text-sm font-medium text-slate-700 dark:text-slate-200">Aucune location pour cette voiture.</p>
+                <p className="mt-1 text-sm text-muted-foreground dark:text-slate-400">
+                  Les réservations apparaîtront ici dès qu'elles seront créées.
+                </p>
+              </div>
             ) : (
-              detailsHistory.map((reservation) => (
-                <div className="rounded-md border border-border p-3 text-sm" key={reservation.id}>
-                  <div className="flex items-center justify-between">
-                    <span>Réservation #{reservation.id}</span>
-                    <StatusBadge status={reservation.status} />
+              <div className="grid gap-4">
+                {detailsHistory.map((reservation) => (
+                  <div className="rounded-2xl border border-slate-200 bg-white p-4 text-sm transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-md dark:border-slate-800 dark:bg-slate-900 dark:hover:border-blue-500/50" key={reservation.id}>
+                    <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                      <div className="min-w-0 space-y-3">
+                        <div>
+                          <h3 className="font-semibold text-slate-950 dark:text-slate-100">Réservation #{reservation.id}</h3>
+                          <p className="mt-1 text-sm text-muted-foreground dark:text-slate-400">
+                            {formatShortPeriod(reservation.startDate, reservation.endDate)}
+                          </p>
+                        </div>
+                        <div className="flex flex-wrap gap-3">
+                          <span className="inline-flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1.5 text-slate-700 dark:bg-slate-800 dark:text-slate-200">
+                            <CalendarDays className="h-4 w-4 text-slate-500 dark:text-slate-400" />
+                            {formatShortPeriod(reservation.startDate, reservation.endDate)}
+                          </span>
+                          <span className="inline-flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1.5 font-semibold text-slate-900 dark:bg-slate-800 dark:text-slate-100">
+                            <CircleDollarSign className="h-4 w-4 text-slate-500 dark:text-slate-400" />
+                            {formatMoney(reservation.totalPrice)}
+                          </span>
+                        </div>
+                      </div>
+                      <HistoryStatusBadge status={reservation.status} />
+                    </div>
                   </div>
-                  <p className="mt-1 text-muted-foreground">
-                    {formatShortPeriod(reservation.startDate, reservation.endDate)} | {formatMoney(reservation.totalPrice)}
-                  </p>
-                </div>
-              ))
+                ))}
+              </div>
             )}
+          </div>
+          <div className="sticky bottom-0 z-20 flex items-center justify-between gap-4 border-t border-slate-200 bg-white/95 px-6 py-4 backdrop-blur dark:border-slate-800 dark:bg-slate-950/95">
+            <p className="text-sm text-muted-foreground dark:text-slate-400">
+              {detailsHistory.length} réservation{detailsHistory.length > 1 ? "s" : ""}
+            </p>
+            <DialogClose asChild>
+              <Button className="min-w-28 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2" type="button" variant="outline">
+                Fermer
+              </Button>
+            </DialogClose>
           </div>
         </DialogContent>
       </Dialog>
@@ -537,17 +578,13 @@ export function CarsPage() {
               </div>
               <div>
                 <Label>Niveau carburant au retour</Label>
-                <select
-                  className="h-10 w-full rounded-md border border-input bg-white px-3 text-sm"
-                  onChange={(event) => setRetourFuel(event.target.value)}
+                <SearchableSelect
+                  ariaLabel="Sélectionner le niveau carburant au retour"
+                  onValueChange={setRetourFuel}
+                  options={fuelLevelOptions}
+                  searchPlaceholder="Rechercher un niveau..."
                   value={retourFuel}
-                >
-                  {fuelLevels.map((level) => (
-                    <option key={level} value={level}>
-                      {level}
-                    </option>
-                  ))}
-                </select>
+                />
               </div>
               <div className="flex justify-end gap-2">
                 <Button onClick={() => setRetourCar(null)} type="button" variant="outline">
@@ -643,52 +680,13 @@ function CarActions({
   onView: () => void;
 }) {
   return (
-    <div className="flex items-center justify-end gap-1">
-      <Button aria-label="Voir" className="h-8 w-8 text-slate-500 hover:text-primary" onClick={onView} size="icon" title="Voir" variant="ghost">
-        <Eye className="h-4 w-4" />
-      </Button>
-      <Button
-        aria-label="Modifier"
-        className="h-8 w-8 text-slate-500 hover:text-primary"
-        onClick={onEdit}
-        size="icon"
-        title="Modifier"
-        variant="ghost"
-      >
-        <Pencil className="h-4 w-4" />
-      </Button>
-      <Button
-        aria-label="Supprimer"
-        className="h-8 w-8 text-slate-500 hover:text-destructive"
-        onClick={onDelete}
-        size="icon"
-        title="Supprimer"
-        variant="ghost"
-      >
-        <Trash2 className="h-4 w-4" />
-      </Button>
+    <div className="flex items-center justify-end gap-2">
+      <ActionIconButton color="blue" icon={Eye} label="Voir détails" onClick={onView} />
+      <ActionIconButton color="amber" icon={Pencil} label="Modifier" onClick={onEdit} />
+      <ActionIconButton color="red" icon={Trash2} label="Supprimer" onClick={onDelete} />
       {car.status === "RENTED" && hasOngoingReservation ? (
-        <Button
-          aria-label="Retour voiture"
-          className="h-8 rounded-full bg-emerald-600 px-3 text-xs font-semibold text-white hover:bg-emerald-700"
-          onClick={onRetour}
-          size="sm"
-          title="Enregistrer le retour"
-          variant="ghost"
-        >
-          Retour
-        </Button>
-      ) : (
-        <Button
-          aria-label="Options"
-          className="h-8 w-8 rounded-full border border-slate-200 bg-white text-slate-400 hover:bg-slate-50 hover:text-primary"
-          size="icon"
-          title="Options"
-          variant="ghost"
-        >
-          <MoreVertical className="h-4 w-4" />
-        </Button>
-      )}
+        <ActionIconButton color="emerald" icon={CheckCircle2} label="Enregistrer le retour" onClick={onRetour} />
+      ) : null}
     </div>
   );
 }
@@ -734,6 +732,31 @@ function FleetStatusBadge({ status }: { status: CarStatus }) {
 
   return (
     <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ${styles[status]}`}>
+      <span className={`h-1.5 w-1.5 rounded-full ${dotStyles[status]}`} />
+      {getStatusLabel(status)}
+    </span>
+  );
+}
+
+function HistoryStatusBadge({ status }: { status: Reservation["status"] }) {
+  const styles: Record<Reservation["status"], string> = {
+    CANCELLED: "bg-red-50 text-red-700 ring-red-200 dark:bg-red-950/40 dark:text-red-200 dark:ring-red-900",
+    COMPLETED: "bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-200 dark:ring-emerald-900",
+    EN_ATTENTE: "bg-blue-50 text-blue-700 ring-blue-200 dark:bg-blue-950/40 dark:text-blue-200 dark:ring-blue-900",
+    ONGOING: "bg-blue-50 text-blue-700 ring-blue-200 dark:bg-blue-950/40 dark:text-blue-200 dark:ring-blue-900",
+    RESERVED: "bg-blue-50 text-blue-700 ring-blue-200 dark:bg-blue-950/40 dark:text-blue-200 dark:ring-blue-900",
+  };
+
+  const dotStyles: Record<Reservation["status"], string> = {
+    CANCELLED: "bg-red-500",
+    COMPLETED: "bg-emerald-500",
+    EN_ATTENTE: "bg-blue-500",
+    ONGOING: "bg-blue-500",
+    RESERVED: "bg-blue-500",
+  };
+
+  return (
+    <span className={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold ring-1 ${styles[status]}`}>
       <span className={`h-1.5 w-1.5 rounded-full ${dotStyles[status]}`} />
       {getStatusLabel(status)}
     </span>
@@ -788,79 +811,6 @@ function FleetStatCard({
   );
 }
 
-function Pagination({
-  currentPage,
-  onPageChange,
-  totalPages,
-}: {
-  currentPage: number;
-  onPageChange: (page: number) => void;
-  totalPages: number;
-}) {
-  const pages = buildPagination(currentPage, totalPages);
-
-  return (
-    <div className="flex items-center justify-end gap-2">
-      <Button
-        aria-label="Page précédente"
-        className="h-9 w-9 rounded-lg border-slate-200"
-        disabled={currentPage === 1}
-        onClick={() => onPageChange(Math.max(1, currentPage - 1))}
-        size="icon"
-        variant="outline"
-      >
-        <ChevronLeft className="h-4 w-4" />
-      </Button>
-      {pages.map((item, index) =>
-        item === "ellipsis" ? (
-          <span className="px-2 text-slate-400" key={`${item}-${index}`}>
-            ...
-          </span>
-        ) : (
-          <Button
-            className={
-              item === currentPage
-                ? "h-9 w-9 rounded-lg border-blue-200 bg-white text-primary shadow-sm"
-                : "h-9 w-9 rounded-lg border-slate-200 bg-white text-slate-600"
-            }
-            key={item}
-            onClick={() => onPageChange(item)}
-            size="icon"
-            variant="outline"
-          >
-            {item}
-          </Button>
-        ),
-      )}
-      <Button
-        aria-label="Page suivante"
-        className="h-9 w-9 rounded-lg border-slate-200"
-        disabled={currentPage === totalPages}
-        onClick={() => onPageChange(Math.min(totalPages, currentPage + 1))}
-        size="icon"
-        variant="outline"
-      >
-        <ChevronRight className="h-4 w-4" />
-      </Button>
-    </div>
-  );
-}
-
-function buildPagination(currentPage: number, totalPages: number): Array<number | "ellipsis"> {
-  if (totalPages <= 5) {
-    return Array.from({ length: totalPages }, (_, index) => index + 1);
-  }
-
-  if (currentPage <= 3) {
-    return [1, 2, 3, "ellipsis", totalPages];
-  }
-
-  if (currentPage >= totalPages - 2) {
-    return [1, "ellipsis", totalPages - 2, totalPages - 1, totalPages];
-  }
-
-  return [1, "ellipsis", currentPage, "ellipsis", totalPages];
-}
 
 function getDateAlert(value: string | null | undefined, label: string) {
   if (!value) return null;

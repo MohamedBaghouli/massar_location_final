@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import {
+  Archive,
   Banknote,
   CalendarDays,
   Check,
@@ -11,11 +12,16 @@ import {
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { PageHeader } from "@/app/layout";
-import { Pagination } from "@/components/Pagination";
+import { ActionIconButton } from "@/components/ui/action-buttons/ActionIconButton";
+import { AppPagination } from "@/components/ui/pagination/AppPagination";
+import { ArchiveConfirmDialog } from "@/components/archive/ArchiveConfirmDialog";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { SearchableSelect } from "@/components/ui/SearchableSelect";
 import { DepositAnalyticsDialog } from "@/pages/payments/DepositAnalyticsDialog";
 import { PaymentForm } from "@/pages/payments/PaymentForm";
+import { archiveItem } from "@/services/archiveService";
 import { getCars } from "@/services/car.service";
 import { getClients } from "@/services/client.service";
 import { createPayment, getPayments } from "@/services/payment.service";
@@ -27,9 +33,10 @@ import type { Reservation } from "@/types/reservation";
 import { cn } from "@/lib/utils";
 import { formatCarName, formatRegistrationNumber } from "@/utils/car";
 import { normalizeClientName } from "@/utils/client";
-import { formatShortPeriod } from "@/utils/date";
+import { formatShortPeriod, getLocalDateKey } from "@/utils/date";
 import { formatMoney } from "@/utils/money";
 import { useToast } from "@/hooks/useToast";
+import { readStoredPageSize, writeStoredPageSize } from "@/lib/pagination";
 
 type PaymentStatus = "Non payé" | "Partiel" | "Payé" | "Annulée";
 type DepositStatus = "Non versée" | "Bloquée" | "Remboursée" | "Retenue";
@@ -50,17 +57,31 @@ type ReservationSummary = {
   status: PaymentStatus;
 };
 
+const paymentsPageSizeKey = "massar-pagination-page-size-payments";
+const paymentStatusFilterOptions = [
+  { value: "ALL", label: "Tous les statuts" },
+  { value: "Payé", label: "Payé" },
+  { value: "Partiel", label: "Partiel" },
+  { value: "Non payé", label: "Non payé" },
+  { value: "Annulée", label: "Annulée" },
+];
+
 export function PaymentsPage() {
+  const defaultPeriod = useMemo(() => getCurrentMonthPeriod(new Date()), []);
   const [payments, setPayments] = useState<Payment[]>([]);
   const [reservations, setReservations] = useState<Reservation[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
   const [cars, setCars] = useState<Car[]>([]);
   const [reservationFilter, setReservationFilter] = useState<number>(0);
   const [statusFilter, setStatusFilter] = useState<"ALL" | PaymentStatus>("ALL");
+  const [periodFrom, setPeriodFrom] = useState(defaultPeriod.from);
+  const [periodTo, setPeriodTo] = useState(defaultPeriod.to);
   const [currentPage, setCurrentPage] = useState(1);
-  const [itemsPerPage, setItemsPerPage] = useState(10);
+  const [itemsPerPage, setItemsPerPage] = useState(() => readStoredPageSize(paymentsPageSizeKey));
   const [open, setOpen] = useState(false);
   const [actionSummary, setActionSummary] = useState<ReservationSummary | null>(null);
+  const [archivePayment, setArchivePayment] = useState<Payment | null>(null);
+  const [archiveLoading, setArchiveLoading] = useState(false);
   const [depositAnalyticsOpen, setDepositAnalyticsOpen] = useState(false);
   const { showToast } = useToast();
 
@@ -123,25 +144,53 @@ export function PaymentsPage() {
       summaries
         .filter((summary) => reservationFilter === 0 || summary.reservation.id === reservationFilter)
         .filter((summary) => statusFilter === "ALL" || summary.status === statusFilter)
+        .filter((summary) => reservationOverlapsPeriod(summary.reservation, periodFrom, periodTo))
         .sort((first, second) => second.remaining - first.remaining),
-    [reservationFilter, statusFilter, summaries],
+    [periodFrom, periodTo, reservationFilter, statusFilter, summaries],
+  );
+  const reservationFilterOptions = useMemo(
+    () => [
+      { value: 0, label: "Toutes les réservations" },
+      ...summaries.map((summary) => ({
+        keywords: `${summary.reservation.id} ${summary.client?.fullName ?? ""} ${summary.secondClient?.fullName ?? ""} ${summary.car?.registrationNumber ?? ""}`,
+        label: getReservationLabel(summary),
+        value: summary.reservation.id,
+      })),
+    ],
+    [summaries],
   );
 
+  const totalPages = Math.max(1, Math.ceil(filteredSummaries.length / itemsPerPage));
+  const safeCurrentPage = Math.min(currentPage, totalPages);
+
   const paginatedSummaries = useMemo(() => {
-    const startIndex = (currentPage - 1) * itemsPerPage;
+    const startIndex = (safeCurrentPage - 1) * itemsPerPage;
     return filteredSummaries.slice(startIndex, startIndex + itemsPerPage);
-  }, [currentPage, filteredSummaries, itemsPerPage]);
+  }, [filteredSummaries, itemsPerPage, safeCurrentPage]);
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [reservationFilter, statusFilter]);
+  }, [periodFrom, periodTo, reservationFilter, statusFilter]);
 
   useEffect(() => {
-    const totalPages = Math.max(1, Math.ceil(filteredSummaries.length / itemsPerPage));
     if (currentPage > totalPages) {
       setCurrentPage(totalPages);
     }
-  }, [currentPage, filteredSummaries.length, itemsPerPage]);
+  }, [currentPage, totalPages]);
+
+  function handlePageSizeChange(nextItemsPerPage: number) {
+    setItemsPerPage(nextItemsPerPage);
+    writeStoredPageSize(paymentsPageSizeKey, nextItemsPerPage);
+    setCurrentPage(1);
+  }
+
+  function resetFilters() {
+    setReservationFilter(0);
+    setStatusFilter("ALL");
+    setPeriodFrom(defaultPeriod.from);
+    setPeriodTo(defaultPeriod.to);
+    setCurrentPage(1);
+  }
 
   const totals = useMemo(() => {
     const totalDue = reservations.reduce((sum, reservation) => sum + reservation.totalPrice, 0);
@@ -170,6 +219,21 @@ export function PaymentsPage() {
     }
   }
 
+  async function handleArchivePayment(reason?: string) {
+    if (!archivePayment) return;
+    try {
+      setArchiveLoading(true);
+      await archiveItem({ id: archivePayment.id, reason, type: "payment" });
+      setArchivePayment(null);
+      await reload();
+      showToast({ title: "Paiement archivé avec succès", type: "success" });
+    } catch (caught) {
+      showToast({ message: getErrorMessage(caught), title: "Impossible d'archiver cet élément", type: "error" });
+    } finally {
+      setArchiveLoading(false);
+    }
+  }
+
   return (
     <div className="mx-auto flex w-full max-w-7xl flex-col gap-6">
       <PageHeader title="Paiements">
@@ -191,55 +255,76 @@ export function PaymentsPage() {
 
       <StatsGrid onDepositDetails={() => setDepositAnalyticsOpen(true)} totals={totals} />
 
-      <section className="grid gap-4 rounded-lg border border-border bg-white p-4 shadow-sm xl:grid-cols-3">
+      <section className="grid gap-4 rounded-lg border border-border bg-white p-4 shadow-sm xl:grid-cols-[1fr_1fr_1fr_auto]">
         <FilterField label="Filtrer par réservation">
-          <select
-            className="h-10 w-full rounded-md border border-input bg-white px-3 text-sm outline-none transition-smooth hover:border-primary focus:border-primary focus:ring-2 focus:ring-primary/15"
-            onChange={(event) => setReservationFilter(Number(event.target.value))}
+          <SearchableSelect
+            ariaLabel="Filtrer par réservation"
+            onValueChange={(nextValue) => setReservationFilter(Number(nextValue))}
+            options={reservationFilterOptions}
+            searchPlaceholder="Rechercher une réservation..."
             value={reservationFilter}
-          >
-            <option value={0}>Toutes les réservations</option>
-            {summaries.map((summary) => (
-              <option key={summary.reservation.id} value={summary.reservation.id}>
-                {getReservationLabel(summary)}
-              </option>
-            ))}
-          </select>
+          />
         </FilterField>
 
         <FilterField label="Statut de paiement">
-          <select
-            className="h-10 w-full rounded-md border border-input bg-white px-3 text-sm outline-none transition-smooth hover:border-primary focus:border-primary focus:ring-2 focus:ring-primary/15"
-            onChange={(event) => setStatusFilter(event.target.value as "ALL" | PaymentStatus)}
+          <SearchableSelect
+            ariaLabel="Filtrer par statut de paiement"
+            onValueChange={(nextValue) => setStatusFilter(nextValue as "ALL" | PaymentStatus)}
+            options={paymentStatusFilterOptions}
             value={statusFilter}
-          >
-            <option value="ALL">Tous les statuts</option>
-            <option value="Payé">Payé</option>
-            <option value="Partiel">Partiel</option>
-            <option value="Non payé">Non payé</option>
-            <option value="Annulée">Annulée</option>
-          </select>
+          />
         </FilterField>
 
         <FilterField label="Période">
-          <div className="flex h-10 items-center gap-2 rounded-md border border-input bg-white px-3 text-sm text-foreground">
-            <CalendarDays className="h-4 w-4 text-muted-foreground" />
-            {"01/05/2026 -> 31/05/2026"}
+          <div className="grid gap-2 sm:grid-cols-[1fr_auto_1fr] sm:items-center">
+            <div className="relative">
+              <CalendarDays className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                aria-label="Date de début"
+                className="pl-10"
+                max={periodTo || undefined}
+                onChange={(event) => setPeriodFrom(event.target.value)}
+                type="date"
+                value={periodFrom}
+              />
+            </div>
+            <span className="hidden text-sm text-muted-foreground sm:inline">→</span>
+            <div className="relative">
+              <CalendarDays className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                aria-label="Date de fin"
+                className="pl-10"
+                min={periodFrom || undefined}
+                onChange={(event) => setPeriodTo(event.target.value)}
+                type="date"
+                value={periodTo}
+              />
+            </div>
           </div>
         </FilterField>
+
+        <div className="flex items-end">
+          <Button
+            className="h-12 w-full rounded-xl border-slate-200 bg-slate-100 px-5 text-slate-800 shadow-sm hover:bg-slate-200 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800 xl:w-auto"
+            onClick={resetFilters}
+            type="button"
+            variant="outline"
+          >
+            <RotateCcw className="h-4 w-4" />
+            Réinitialiser
+          </Button>
+        </div>
       </section>
 
       <section className="overflow-hidden rounded-lg border border-border bg-white shadow-sm">
-        <PaymentsDataGrid onPaymentAction={setActionSummary} rows={paginatedSummaries} />
-        <Pagination
-          currentPage={currentPage}
-          itemsPerPage={itemsPerPage}
-          onItemsPerPageChange={(nextItemsPerPage) => {
-            setItemsPerPage(nextItemsPerPage);
-            setCurrentPage(1);
-          }}
+        <PaymentsDataGrid onArchivePayment={setArchivePayment} onPaymentAction={setActionSummary} rows={paginatedSummaries} />
+        <AppPagination
+          currentPage={safeCurrentPage}
           onPageChange={setCurrentPage}
+          onPageSizeChange={handlePageSizeChange}
+          pageSize={itemsPerPage}
           totalItems={filteredSummaries.length}
+          totalPages={totalPages}
         />
       </section>
 
@@ -276,6 +361,15 @@ export function PaymentsPage() {
         open={depositAnalyticsOpen}
         payments={payments}
         reservations={reservations}
+      />
+
+      <ArchiveConfirmDialog
+        itemTitle={archivePayment ? `Paiement #${archivePayment.id}` : "Paiement"}
+        itemType="payment"
+        loading={archiveLoading}
+        onCancel={() => !archiveLoading && setArchivePayment(null)}
+        onConfirm={(reason) => void handleArchivePayment(reason)}
+        open={Boolean(archivePayment)}
       />
     </div>
   );
@@ -386,17 +480,19 @@ function StatCard({
 
 function FilterField({ children, label }: { children: React.ReactNode; label: string }) {
   return (
-    <label className="space-y-2">
+    <div className="space-y-2">
       <span className="text-xs font-semibold text-muted-foreground">{label}</span>
       {children}
-    </label>
+    </div>
   );
 }
 
 function PaymentsDataGrid({
+  onArchivePayment,
   onPaymentAction,
   rows,
 }: {
+  onArchivePayment: (payment: Payment) => void;
   onPaymentAction: (summary: ReservationSummary) => void;
   rows: ReservationSummary[];
 }) {
@@ -451,28 +547,27 @@ function PaymentsDataGrid({
                     <PaymentStatus label={row.status} />
                   </TableCell>
                   <TableCell className="text-right">
-                    <Button
+                    <ActionIconButton
+                      color="emerald"
                       disabled={actionLocked}
+                      icon={Banknote}
+                      label={actionLocked ? "Paiement et remboursement terminés" : "Ajouter une action paiement"}
                       onClick={() => onPaymentAction(row)}
-                      size="icon"
-                      title={actionLocked ? "Paiement et remboursement terminés" : "Ajouter une action paiement"}
-                      type="button"
-                      variant="outline"
-                    >
-                      <Banknote className="h-4 w-4" />
-                    </Button>
+                    />
                   </TableCell>
                   <TableCell className="text-right">
                     {row.latestPayment ? (
-                      <Button asChild size="icon" title="Voir détail" variant="ghost">
-                        <Link to={`/payments/${row.latestPayment.id}`}>
-                          <Eye className="h-4 w-4" />
-                        </Link>
-                      </Button>
+                      <div className="flex justify-end gap-2">
+                        <ActionIconButton asChild color="blue" icon={Eye} label="Voir détail">
+                          <Link to={`/payments/${row.latestPayment.id}`}>
+                            <Eye className="h-4 w-4" />
+                          </Link>
+                        </ActionIconButton>
+                        <ActionIconButton color="emerald" icon={ReceiptText} label="Reçu" />
+                        <ActionIconButton color="violet" icon={Archive} label="Archiver" onClick={() => onArchivePayment(row.latestPayment!)} />
+                      </div>
                     ) : (
-                      <Button disabled size="icon" title="Aucun paiement renseigné" variant="ghost">
-                        <Eye className="h-4 w-4" />
-                      </Button>
+                      <ActionIconButton color="slate" disabled icon={Eye} label="Aucun paiement renseigné" />
                     )}
                   </TableCell>
                 </tr>
@@ -589,6 +684,23 @@ function getReservationLabel(summary: ReservationSummary) {
   return `${summary.client ? normalizeClientName(summary.client.fullName) : "Client inconnu"}${secondClient} - ${formatSummaryCar(
     summary.car,
   )} - ${formatShortPeriod(summary.reservation.startDate, summary.reservation.endDate)}`;
+}
+
+function getCurrentMonthPeriod(date: Date) {
+  const from = getLocalDateKey(new Date(date.getFullYear(), date.getMonth(), 1));
+  const to = getLocalDateKey(new Date(date.getFullYear(), date.getMonth() + 1, 0));
+  return { from, to };
+}
+
+function reservationOverlapsPeriod(reservation: Reservation, periodFrom: string, periodTo: string) {
+  if (!periodFrom && !periodTo) return true;
+
+  const reservationStart = getLocalDateKey(reservation.startDate);
+  const reservationEnd = getLocalDateKey(reservation.endDate);
+  const from = periodFrom || "0000-01-01";
+  const to = periodTo || "9999-12-31";
+
+  return reservationStart <= to && reservationEnd >= from;
 }
 
 function formatSummaryCar(car?: Car) {

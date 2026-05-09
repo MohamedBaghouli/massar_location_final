@@ -18,8 +18,8 @@ export function ArchiveTabs({ active, onChange }: { active: ArchiveTab; onChange
       {tabs.map((tab) => (
         <button
           className={cn(
-            "h-10 rounded-lg border border-border bg-white px-4 text-sm font-semibold text-slate-600 transition-smooth hover:bg-slate-100 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800",
-            active === tab.value && "border-blue-600 bg-blue-600 text-white hover:bg-blue-600 dark:bg-blue-600 dark:text-white",
+            "h-10 rounded-[11px] border border-border bg-white px-[18px] text-sm font-semibold text-[#324767] shadow-sm transition-smooth hover:-translate-y-0.5 hover:border-slate-300 hover:bg-white dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800",
+            active === tab.value && "border-[#2746d6] bg-[#2746d6] text-white shadow-[0_6px_14px_rgba(39,70,214,0.30)] hover:bg-[#2746d6] dark:bg-blue-600 dark:text-white",
           )}
           key={tab.value}
           onClick={() => onChange(tab.value)}

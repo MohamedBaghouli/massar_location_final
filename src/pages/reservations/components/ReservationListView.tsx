@@ -10,6 +10,8 @@ interface ReservationListViewProps {
   filters: ReservationFiltersState;
   items: ReservationViewModel[];
   onCreate: () => void;
+  onArchive: (reservation: Reservation) => void;
+  onArchiveSelected: (reservations: Reservation[]) => void | Promise<void>;
   onEdit: (reservation: Reservation) => void;
   onFiltersChange: (filters: ReservationFiltersState) => void;
   onSelect: (reservation: Reservation) => void;
@@ -29,6 +31,8 @@ export function ReservationListView({
   filters,
   items,
   onCreate,
+  onArchive,
+  onArchiveSelected,
   onEdit,
   onFiltersChange,
   onSelect,
@@ -48,6 +52,8 @@ export function ReservationListView({
       <ReservationFilters cars={cars} filters={filters} onChange={onFiltersChange} />
       <ReservationDataGrid
         items={items}
+        onArchive={onArchive}
+        onArchiveSelected={onArchiveSelected}
         onCreate={onCreate}
         onEdit={onEdit}
         onSelect={onSelect}

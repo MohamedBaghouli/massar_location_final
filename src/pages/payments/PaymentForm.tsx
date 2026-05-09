@@ -3,6 +3,7 @@ import { useForm } from "react-hook-form";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { SearchableSelect } from "@/components/ui/SearchableSelect";
 import type { Car } from "@/types/car";
 import type { Client } from "@/types/client";
 import type { CreatePaymentDto, Payment, PaymentType } from "@/types/payment";
@@ -38,8 +39,6 @@ type PaymentFormProps = {
   lockReservation?: boolean;
 };
 
-const selectClassName = "h-10 w-full rounded-md border border-input bg-white px-3 text-sm";
-
 const buttonLabels: Record<PaymentType, string> = {
   RENTAL_PAYMENT: "Ajouter paiement",
   DEPOSIT: "Encaisser caution",
@@ -48,6 +47,13 @@ const buttonLabels: Record<PaymentType, string> = {
 };
 
 const penaltyReasons = ["Retard", "Carburant manquant", "Dommage", "Kilométrage dépassé"];
+
+const paymentMethodOptions = [
+  { value: "CASH", label: "Espèces" },
+  { value: "CARD", label: "Carte" },
+  { value: "BANK_TRANSFER", label: "Virement" },
+  { value: "CHECK", label: "Chèque" },
+];
 
 export function PaymentForm({
   onSubmit,
@@ -90,6 +96,17 @@ export function PaymentForm({
     () => reservations.find((reservation) => reservation.id === reservationId),
     [reservationId, reservations],
   );
+  const reservationOptions = useMemo(
+    () => [
+      { value: 0, label: "Sélectionner" },
+      ...reservations.map((reservation) => ({
+        keywords: `${reservation.id} ${reservation.clientId} ${reservation.secondClientId ?? ""} ${reservation.carId}`,
+        label: getReservationLabel(reservation, clientsById, carsById),
+        value: reservation.id,
+      })),
+    ],
+    [carsById, clientsById, reservations],
+  );
 
   useEffect(() => {
     setValue("reservationId", initialReservationId, { shouldValidate: true });
@@ -119,6 +136,23 @@ export function PaymentForm({
       depositAvailable,
     };
   }, [payments, selectedReservation]);
+  const paymentTypeOptions = useMemo(
+    () => [
+      { value: "RENTAL_PAYMENT", label: "Paiement location", disabled: Boolean(summary && summary.rentalRemaining <= 0) },
+      { value: "DEPOSIT", label: "Caution", disabled: Boolean(summary && (summary.depositCollected > 0 || summary.depositExpected <= 0)) },
+      {
+        value: "DEPOSIT_REFUND",
+        label: "Remboursement caution",
+        disabled: Boolean(summary && (summary.depositAvailable <= 0 || summary.depositRefundDecided)),
+      },
+      { value: "PENALTY", label: "Pénalité" },
+    ],
+    [summary],
+  );
+  const penaltyReasonOptions = useMemo(
+    () => [{ value: "", label: "Sélectionner" }, ...penaltyReasons.map((reason) => ({ value: reason, label: reason }))],
+    [],
+  );
 
   useEffect(() => {
     if (!summary) {
@@ -209,20 +243,22 @@ export function PaymentForm({
             </div>
           </>
         ) : (
-          <select
-            className={selectClassName}
-            {...register("reservationId", {
-              valueAsNumber: true,
-              validate: (value) => Number(value) > 0 || "Sélectionnez une réservation.",
-            })}
-          >
-            <option value={0}>Sélectionner</option>
-            {reservations.map((reservation) => (
-              <option key={reservation.id} value={reservation.id}>
-                {getReservationLabel(reservation, clientsById, carsById)}
-              </option>
-            ))}
-          </select>
+          <>
+            <input
+              type="hidden"
+              {...register("reservationId", {
+                valueAsNumber: true,
+                validate: (value) => Number(value) > 0 || "Sélectionnez une réservation.",
+              })}
+            />
+            <SearchableSelect
+              ariaLabel="Sélectionner une réservation"
+              onValueChange={(nextValue) => setValue("reservationId", Number(nextValue), { shouldDirty: true, shouldValidate: true })}
+              options={reservationOptions}
+              searchPlaceholder="Rechercher une réservation..."
+              value={reservationId}
+            />
+          </>
         )}
         {errors.reservationId && <p className="mt-1 text-xs text-destructive">{errors.reservationId.message}</p>}
       </div>
@@ -235,18 +271,14 @@ export function PaymentForm({
 
       <div>
         <Label>Type de paiement</Label>
-        <select className={selectClassName} {...register("type")}>
-          <option disabled={Boolean(summary && summary.rentalRemaining <= 0)} value="RENTAL_PAYMENT">
-            Paiement location
-          </option>
-          <option disabled={Boolean(summary && (summary.depositCollected > 0 || summary.depositExpected <= 0))} value="DEPOSIT">
-            Caution
-          </option>
-          <option disabled={Boolean(summary && (summary.depositAvailable <= 0 || summary.depositRefundDecided))} value="DEPOSIT_REFUND">
-            Remboursement caution
-          </option>
-          <option value="PENALTY">Pénalité</option>
-        </select>
+        <input type="hidden" {...register("type")} />
+        <SearchableSelect
+          ariaLabel="Sélectionner le type de paiement"
+          onValueChange={(nextValue) => setValue("type", nextValue as PaymentType, { shouldDirty: true, shouldValidate: true })}
+          options={paymentTypeOptions}
+          searchPlaceholder="Rechercher un type..."
+          value={paymentType}
+        />
       </div>
 
       <div>
@@ -270,12 +302,14 @@ export function PaymentForm({
 
       <div>
         <Label>Méthode de paiement</Label>
-        <select className={selectClassName} {...register("method")}>
-          <option value="CASH">Espèces</option>
-          <option value="CARD">Carte</option>
-          <option value="BANK_TRANSFER">Virement</option>
-          <option value="CHECK">Chèque</option>
-        </select>
+        <input type="hidden" {...register("method")} />
+        <SearchableSelect
+          ariaLabel="Sélectionner la méthode de paiement"
+          onValueChange={(nextValue) => setValue("method", nextValue as CreatePaymentDto["method"], { shouldDirty: true, shouldValidate: true })}
+          options={paymentMethodOptions}
+          searchPlaceholder="Rechercher une méthode..."
+          value={watch("method")}
+        />
       </div>
 
       <div>
@@ -286,20 +320,20 @@ export function PaymentForm({
       {paymentType === "PENALTY" && (
         <div className="md:col-span-2">
           <Label>Motif de pénalité</Label>
-          <select
-            className={selectClassName}
+          <input
+            type="hidden"
             {...register("penaltyReason", {
               validate: (value) =>
                 paymentType !== "PENALTY" || value.trim().length > 0 || "Indiquez le motif de pénalité.",
             })}
-          >
-            <option value="">Sélectionner</option>
-            {penaltyReasons.map((reason) => (
-              <option key={reason} value={reason}>
-                {reason}
-              </option>
-            ))}
-          </select>
+          />
+          <SearchableSelect
+            ariaLabel="Sélectionner le motif de pénalité"
+            onValueChange={(nextValue) => setValue("penaltyReason", nextValue, { shouldDirty: true, shouldValidate: true })}
+            options={penaltyReasonOptions}
+            searchPlaceholder="Rechercher un motif..."
+            value={watch("penaltyReason")}
+          />
           {errors.penaltyReason && <p className="mt-1 text-xs text-destructive">{errors.penaltyReason.message}</p>}
         </div>
       )}

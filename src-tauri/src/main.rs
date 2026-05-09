@@ -26,8 +26,6 @@ const MIGRATION_CLIENT_IS_ACTIVE: &str =
     include_str!("../../prisma/migrations/20260502000000_client_is_active/migration.sql");
 const MIGRATION_AUTH_USERS: &str =
     include_str!("../../prisma/migrations/20260505000000_auth_users/migration.sql");
-const MIGRATION_ARCHIVE_FIELDS: &str =
-    include_str!("../../prisma/migrations/20260507000000_archive_fields/migration.sql");
 const PASSWORD_ITERATIONS: u32 = 120_000;
 const DEV_DEFAULT_FULL_NAME: &str = "Dev Admin";
 const DEV_DEFAULT_USERNAME: &str = "admin";
@@ -71,6 +69,14 @@ struct SeedSampleDataResult {
     clients_created: i32,
     reservations_created: i32,
     payments_created: i32,
+    message: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DatabaseFileResult {
+    success: bool,
+    path: String,
     message: String,
 }
 
@@ -307,6 +313,70 @@ fn db_path() -> Result<PathBuf, String> {
     Ok(root.join("prisma").join("dev.db"))
 }
 
+fn database_backup_file_name(prefix: &str) -> String {
+    let timestamp = format_unix_seconds(unix_now_seconds())
+        .replace(':', "-")
+        .replace('T', "_");
+    format!("{prefix}_{timestamp}.db")
+}
+
+fn unique_database_backup_path(directory: &Path, prefix: &str) -> PathBuf {
+    let first = directory.join(database_backup_file_name(prefix));
+    if !first.exists() {
+        return first;
+    }
+
+    for index in 1..100 {
+        let timestamp = format_unix_seconds(unix_now_seconds())
+            .replace(':', "-")
+            .replace('T', "_");
+        let candidate = directory.join(format!("{prefix}_{timestamp}_{index}.db"));
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+
+    directory.join(format!("{prefix}_{}.db", unix_now_seconds()))
+}
+
+fn sqlite_string_literal(value: &Path) -> String {
+    value.to_string_lossy().replace('\'', "''")
+}
+
+fn validate_existing_database_file(path: &Path) -> Result<(), String> {
+    if !path.exists() {
+        return Err("Base de données introuvable.".to_string());
+    }
+    if !path.is_file() {
+        return Err("Le chemin indiqué n'est pas un fichier.".to_string());
+    }
+
+    let connection = Connection::open(path)
+        .map_err(|error| format!("Impossible d'ouvrir cette base de données SQLite : {error}"))?;
+    let integrity: String = connection
+        .query_row("PRAGMA integrity_check", [], |row| row.get(0))
+        .map_err(|error| error.to_string())?;
+    if integrity != "ok" {
+        return Err("La base SQLite choisie est corrompue.".to_string());
+    }
+
+    let app_table_count: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN ('Car', 'Client', 'Reservation', 'Payment', 'Contract')",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|error| error.to_string())?;
+
+    if app_table_count < 5 {
+        return Err(
+            "La base choisie n'est pas une base de données de cette application.".to_string(),
+        );
+    }
+
+    Ok(())
+}
+
 fn init_db() -> Result<Connection, String> {
     let path = db_path()?;
     if let Some(parent) = path.parent() {
@@ -391,11 +461,7 @@ fn init_db() -> Result<Connection, String> {
             .map_err(|error| error.to_string())?;
     }
 
-    if !has_column(&connection, "Client", "archived") {
-        connection
-            .execute_batch(MIGRATION_ARCHIVE_FIELDS)
-            .map_err(|error| error.to_string())?;
-    }
+    ensure_archive_fields(&connection)?;
 
     seed_default_user_if_empty(&connection)?;
 
@@ -425,6 +491,31 @@ fn has_column(connection: &Connection, table: &str, column: &str) -> bool {
         })
         .map(|cols| cols.iter().any(|c| c == column))
         .unwrap_or(false)
+}
+
+fn ensure_archive_fields(connection: &Connection) -> Result<(), String> {
+    for table in ["Reservation", "Payment", "Contract"] {
+        add_column_if_missing(connection, table, "archived", "BOOLEAN DEFAULT 0")?;
+        add_column_if_missing(connection, table, "archivedAt", "TEXT")?;
+        add_column_if_missing(connection, table, "archivedReason", "TEXT")?;
+    }
+    Ok(())
+}
+
+fn add_column_if_missing(
+    connection: &Connection,
+    table: &str,
+    column: &str,
+    definition: &str,
+) -> Result<(), String> {
+    if has_column(connection, table, column) {
+        return Ok(());
+    }
+    let sql = format!("ALTER TABLE {table} ADD COLUMN {column} {definition}");
+    connection
+        .execute(&sql, [])
+        .map_err(|error| error.to_string())?;
+    Ok(())
 }
 
 fn get_car_by_id(connection: &Connection, id: i64) -> Result<Car, String> {
@@ -477,7 +568,10 @@ fn get_contract_by_id(connection: &Connection, id: i64) -> Result<Contract, Stri
         .map_err(|error| error.to_string())
 }
 
-fn get_user_by_username(connection: &Connection, username: &str) -> Result<Option<StoredUser>, String> {
+fn get_user_by_username(
+    connection: &Connection,
+    username: &str,
+) -> Result<Option<StoredUser>, String> {
     match connection.query_row(
         "SELECT id, fullName, username, passwordSalt, passwordHash FROM User WHERE lower(username) = lower(?1)",
         params![username],
@@ -799,7 +893,11 @@ fn login_user(state: tauri::State<'_, AppState>, data: LoginDto) -> Result<AuthS
     let stored_user = get_user_by_username(&connection, &username)?
         .ok_or_else(|| "Identifiants invalides.".to_string())?;
 
-    if !verify_password(&data.password, &stored_user.password_salt, &stored_user.password_hash)? {
+    if !verify_password(
+        &data.password,
+        &stored_user.password_salt,
+        &stored_user.password_hash,
+    )? {
         return Err("Identifiants invalides.".to_string());
     }
 
@@ -842,10 +940,128 @@ fn logout_user(state: tauri::State<'_, AppState>) -> Result<AuthState, String> {
 }
 
 #[tauri::command]
+fn save_database_copy(
+    state: tauri::State<'_, AppState>,
+    target_folder: String,
+) -> Result<DatabaseFileResult, String> {
+    let _ = require_authenticated(&state)?;
+    let folder = PathBuf::from(target_folder.trim());
+    if target_folder.trim().is_empty() {
+        return Err("Indiquez un dossier local pour enregistrer la base.".to_string());
+    }
+
+    fs::create_dir_all(&folder)
+        .map_err(|error| format!("Impossible de créer le dossier de sauvegarde : {error}"))?;
+
+    let destination = unique_database_backup_path(&folder, "location_massar");
+    let connection = state.db.lock().map_err(|error| error.to_string())?;
+    let sql = format!("VACUUM INTO '{}';", sqlite_string_literal(&destination));
+    connection
+        .execute_batch(&sql)
+        .map_err(|error| format!("Impossible d'enregistrer la base : {error}"))?;
+
+    Ok(DatabaseFileResult {
+        success: true,
+        path: destination.to_string_lossy().to_string(),
+        message: "Base de données enregistrée localement.".to_string(),
+    })
+}
+
+#[tauri::command]
+fn mount_existing_database(
+    state: tauri::State<'_, AppState>,
+    source_path: String,
+) -> Result<DatabaseFileResult, String> {
+    let _ = require_authenticated(&state)?;
+    let trimmed = source_path.trim();
+    if trimmed.is_empty() {
+        return Err("Indiquez le chemin de la base existante.".to_string());
+    }
+
+    let source = PathBuf::from(trimmed);
+    validate_existing_database_file(&source)?;
+
+    let current_path = db_path()?;
+    let source_absolute = source.canonicalize().map_err(|error| error.to_string())?;
+    if current_path.exists() {
+        let current_absolute = current_path
+            .canonicalize()
+            .map_err(|error| error.to_string())?;
+        if source_absolute == current_absolute {
+            return Ok(DatabaseFileResult {
+                success: true,
+                path: current_absolute.to_string_lossy().to_string(),
+                message: "Cette base est déjà la base active.".to_string(),
+            });
+        }
+    }
+
+    if let Some(parent) = current_path.parent() {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+
+    let backup_path = current_path
+        .parent()
+        .map(|parent| unique_database_backup_path(parent, "dev_before_mount"))
+        .ok_or_else(|| "Impossible de préparer la sauvegarde de sécurité.".to_string())?;
+
+    let mut guard = state.db.lock().map_err(|error| error.to_string())?;
+    let had_previous_database = current_path.exists();
+    if had_previous_database {
+        let sql = format!("VACUUM INTO '{}';", sqlite_string_literal(&backup_path));
+        guard.execute_batch(&sql).map_err(|error| {
+            format!("Impossible de sauvegarder la base actuelle avant montage : {error}")
+        })?;
+    }
+
+    let previous_connection = std::mem::replace(
+        &mut *guard,
+        Connection::open_in_memory().map_err(|error| error.to_string())?,
+    );
+    drop(previous_connection);
+
+    if let Err(error) = fs::copy(&source_absolute, &current_path) {
+        if had_previous_database {
+            let _ = fs::copy(&backup_path, &current_path);
+        }
+        *guard = init_db()?;
+        return Err(format!("Impossible de monter la base existante : {error}"));
+    }
+
+    match init_db() {
+        Ok(new_connection) => {
+            *guard = new_connection;
+            Ok(DatabaseFileResult {
+                success: true,
+                path: current_path.to_string_lossy().to_string(),
+                message: if had_previous_database {
+                    format!(
+                        "Base existante montée. Ancienne base sauvegardée dans {}",
+                        backup_path.display()
+                    )
+                } else {
+                    "Base existante montée.".to_string()
+                },
+            })
+        }
+        Err(error) => {
+            if had_previous_database {
+                let _ = fs::copy(&backup_path, &current_path);
+            }
+            *guard = init_db()?;
+            Err(format!(
+                "La base choisie n'a pas pu être initialisée : {error}"
+            ))
+        }
+    }
+}
+
+#[tauri::command]
 fn seed_ai_sample_data(state: tauri::State<'_, AppState>) -> Result<SeedSampleDataResult, String> {
     let _ = require_authenticated(&state)?;
     let connection = state.db.lock().map_err(|error| error.to_string())?;
-    let seed_index = count_users(&connection)? + count(&connection, "SELECT COUNT(*) FROM Reservation")? as i64;
+    let seed_index =
+        count_users(&connection)? + count(&connection, "SELECT COUNT(*) FROM Reservation")? as i64;
 
     let brands_models = [
         ("Toyota", "Yaris", 105.0),
@@ -910,7 +1126,10 @@ fn seed_ai_sample_data(state: tauri::State<'_, AppState>) -> Result<SeedSampleDa
     }
 
     for (index, full_name) in client_names.iter().enumerate() {
-        let phone = format!("55{:06}", ((seed_index as usize + index + 1) % 900_000) + 100_000);
+        let phone = format!(
+            "55{:06}",
+            ((seed_index as usize + index + 1) % 900_000) + 100_000
+        );
         connection
             .execute(
                 "INSERT INTO Client (fullName, phone, cin, passportNumber, drivingLicense, drivingLicenseDate, cinIssueDate, cinIssuePlace, birthDate, birthPlace, nationality, address, isActive, createdAt, updatedAt)
@@ -1005,7 +1224,11 @@ fn seed_ai_sample_data(state: tauri::State<'_, AppState>) -> Result<SeedSampleDa
         payments_created += 1;
 
         if index % 7 == 0 {
-            let refund_amount = if index % 14 == 0 { 250.0 } else { deposit_amount };
+            let refund_amount = if index % 14 == 0 {
+                250.0
+            } else {
+                deposit_amount
+            };
             connection
                 .execute(
                     "INSERT INTO Payment (reservationId, amount, type, method, paymentDate, note, createdAt)
@@ -1497,7 +1720,9 @@ fn delete_reservation(state: tauri::State<'_, AppState>, id: i32) -> Result<(), 
         .map_err(|_| "Réservation introuvable.".to_string())?;
 
     if status != "COMPLETED" && status != "CANCELLED" {
-        return Err("Seules les réservations terminées ou annulées peuvent être archivées.".to_string());
+        return Err(
+            "Seules les réservations terminées ou annulées peuvent être archivées.".to_string(),
+        );
     }
 
     connection
@@ -1602,11 +1827,20 @@ fn generate_contract(
 fn get_archive_stats(state: tauri::State<'_, AppState>) -> Result<ArchiveStats, String> {
     let _ = require_authenticated(&state)?;
     let connection = state.db.lock().map_err(|error| error.to_string())?;
-    let clients = count(&connection, "SELECT COUNT(*) FROM Client WHERE archived = 1")?;
-    let cars = count(&connection, "SELECT COUNT(*) FROM Car WHERE archived = 1")?;
-    let reservations = count(&connection, "SELECT COUNT(*) FROM Reservation WHERE archived = 1")?;
-    let payments = count(&connection, "SELECT COUNT(*) FROM Payment WHERE archived = 1")?;
-    let contracts = count(&connection, "SELECT COUNT(*) FROM Contract WHERE archived = 1")?;
+    let clients = 0;
+    let cars = 0;
+    let reservations = count(
+        &connection,
+        "SELECT COUNT(*) FROM Reservation WHERE archived = 1",
+    )?;
+    let payments = count(
+        &connection,
+        "SELECT COUNT(*) FROM Payment WHERE archived = 1",
+    )?;
+    let contracts = count(
+        &connection,
+        "SELECT COUNT(*) FROM Contract WHERE archived = 1",
+    )?;
 
     Ok(ArchiveStats {
         total: clients + cars + reservations + payments + contracts,
@@ -1623,8 +1857,6 @@ fn get_archived_items(state: tauri::State<'_, AppState>) -> Result<Vec<ArchiveIt
     let _ = require_authenticated(&state)?;
     let connection = state.db.lock().map_err(|error| error.to_string())?;
     let mut items = Vec::new();
-    append_archived_clients(&connection, &mut items)?;
-    append_archived_cars(&connection, &mut items)?;
     append_archived_reservations(&connection, &mut items)?;
     append_archived_payments(&connection, &mut items)?;
     append_archived_contracts(&connection, &mut items)?;
@@ -1644,38 +1876,31 @@ fn archive_item(
     let reason = reason.unwrap_or_else(|| "Archivage manuel".to_string());
 
     match item_type.as_str() {
-        "client" => archive_table_row(&connection, "Client", id, &reason),
-        "car" => archive_table_row(&connection, "Car", id, &reason),
+        "client" | "car" => {
+            Err("L\u{2019}archivage des clients et voitures sera ajout\u{00e9} plus tard.".to_string())
+        }
         "contract" => archive_table_row(&connection, "Contract", id, &reason),
         "reservation" => {
             let status: String = connection
-                .query_row("SELECT status FROM Reservation WHERE id = ?1", params![id], |row| row.get(0))
-                .map_err(|_| "Réservation introuvable.".to_string())?;
-            if status != "COMPLETED" && status != "CANCELLED" {
-                return Err("Seules les réservations terminées ou annulées peuvent être archivées.".to_string());
+                .query_row(
+                    "SELECT status FROM Reservation WHERE id = ?1",
+                    params![id],
+                    |row| row.get(0),
+                )
+                .map_err(|_| "R\u{00e9}servation introuvable.".to_string())?;
+            if !is_archivable_reservation_status(&status) {
+                return Err("Impossible d\u{2019}archiver une r\u{00e9}servation active ou \u{00e0} venir.".to_string());
             }
             archive_table_row(&connection, "Reservation", id, &reason)?;
             connection
                 .execute(
-                    "UPDATE Contract SET archived = true, archivedAt = strftime('%Y-%m-%dT%H:%M:%fZ','now'), archivedReason = ?2 WHERE reservationId = ?1",
+                    "UPDATE Contract SET archived = 1, archivedAt = datetime('now'), archivedReason = ?2 WHERE reservationId = ?1",
                     params![id, reason],
                 )
                 .map_err(|error| error.to_string())?;
             Ok(())
         }
-        "payment" => {
-            let status: String = connection
-                .query_row(
-                    "SELECT Reservation.status FROM Payment INNER JOIN Reservation ON Reservation.id = Payment.reservationId WHERE Payment.id = ?1",
-                    params![id],
-                    |row| row.get(0),
-                )
-                .map_err(|_| "Paiement introuvable.".to_string())?;
-            if status != "COMPLETED" && status != "CANCELLED" {
-                return Err("Seuls les paiements liés à une réservation terminée ou annulée peuvent être archivés.".to_string());
-            }
-            archive_table_row(&connection, "Payment", id, &reason)
-        }
+        "payment" => archive_table_row(&connection, "Payment", id, &reason),
         _ => Err("Type d'archive invalide.".to_string()),
     }
 }
@@ -1689,8 +1914,9 @@ fn restore_archived_item(
     let _ = require_authenticated(&state)?;
     let connection = state.db.lock().map_err(|error| error.to_string())?;
     match item_type.as_str() {
-        "client" => restore_table_row(&connection, "Client", id),
-        "car" => restore_table_row(&connection, "Car", id),
+        "client" | "car" => {
+            Err("L\u{2019}archivage des clients et voitures sera ajout\u{00e9} plus tard.".to_string())
+        }
         "reservation" => restore_table_row(&connection, "Reservation", id),
         "payment" => restore_table_row(&connection, "Payment", id),
         "contract" => restore_table_row(&connection, "Contract", id),
@@ -1707,17 +1933,10 @@ fn permanently_delete_archived_item(
     let _ = require_authenticated(&state)?;
     let connection = state.db.lock().map_err(|error| error.to_string())?;
     match item_type.as_str() {
-        "client" => delete_archived_table_row(&connection, "Client", id),
-        "car" => delete_archived_table_row(&connection, "Car", id),
-        "reservation" => {
-            connection
-                .execute("DELETE FROM Contract WHERE reservationId = ?1 AND archived = 1", params![id])
-                .map_err(|error| error.to_string())?;
-            connection
-                .execute("DELETE FROM Payment WHERE reservationId = ?1 AND archived = 1", params![id])
-                .map_err(|error| error.to_string())?;
-            delete_archived_table_row(&connection, "Reservation", id)
+        "client" | "car" => {
+            Err("L\u{2019}archivage des clients et voitures sera ajout\u{00e9} plus tard.".to_string())
         }
+        "reservation" => delete_archived_table_row(&connection, "Reservation", id),
         "payment" => delete_archived_table_row(&connection, "Payment", id),
         "contract" => delete_archived_table_row(&connection, "Contract", id),
         _ => Err("Type d'archive invalide.".to_string()),
@@ -1728,7 +1947,10 @@ fn permanently_delete_archived_item(
 fn get_dashboard_stats(state: tauri::State<'_, AppState>) -> Result<DashboardStats, String> {
     let _ = require_authenticated(&state)?;
     let connection = state.db.lock().map_err(|error| error.to_string())?;
-    let total_cars = count(&connection, "SELECT COUNT(*) FROM Car WHERE archived = 0 OR archived IS NULL")?;
+    let total_cars = count(
+        &connection,
+        "SELECT COUNT(*) FROM Car WHERE archived = 0 OR archived IS NULL",
+    )?;
     let available_cars = count(
         &connection,
         "SELECT COUNT(*) FROM Car WHERE status = 'AVAILABLE' AND (archived = 0 OR archived IS NULL)",
@@ -1780,13 +2002,28 @@ fn count(connection: &Connection, sql: &str) -> Result<i32, String> {
         .map_err(|error| error.to_string())
 }
 
-fn archive_table_row(connection: &Connection, table: &str, id: i32, reason: &str) -> Result<(), String> {
+fn is_archivable_reservation_status(status: &str) -> bool {
+    matches!(
+        status,
+        "COMPLETED" | "CANCELLED" | "TERMIN\u{00c9}E" | "ANNUL\u{00c9}E"
+    )
+}
+
+fn archive_table_row(
+    connection: &Connection,
+    table: &str,
+    id: i32,
+    reason: &str,
+) -> Result<(), String> {
     let sql = format!(
-        "UPDATE {table} SET archived = true, archivedAt = strftime('%Y-%m-%dT%H:%M:%fZ','now'), archivedReason = ?1 WHERE id = ?2"
+        "UPDATE {table} SET archived = 1, archivedAt = datetime('now'), archivedReason = ?1 WHERE id = ?2"
     );
-    connection
+    let changed = connection
         .execute(&sql, params![reason, id])
         .map_err(|error| error.to_string())?;
+    if changed == 0 {
+        return Err("\u{00c9}l\u{00e9}ment introuvable.".to_string());
+    }
     Ok(())
 }
 
@@ -1811,70 +2048,10 @@ fn delete_archived_table_row(connection: &Connection, table: &str, id: i32) -> R
     Ok(())
 }
 
-fn append_archived_clients(connection: &Connection, items: &mut Vec<ArchiveItem>) -> Result<(), String> {
-    let mut statement = connection
-        .prepare("SELECT id, fullName, phone, cin, passportNumber, isActive, archivedAt, archivedReason FROM Client WHERE archived = 1")
-        .map_err(|error| error.to_string())?;
-    let rows = statement
-        .query_map([], |row| {
-            let id: i32 = row.get(0)?;
-            let full_name: String = row.get(1)?;
-            let phone: String = row.get(2)?;
-            let cin: Option<String> = row.get(3)?;
-            let passport: Option<String> = row.get(4)?;
-            let is_active: bool = row.get(5)?;
-            let archived_at: Option<String> = row.get(6)?;
-            let archived_reason: Option<String> = row.get(7)?;
-            Ok(ArchiveItem {
-                id,
-                item_type: "client".to_string(),
-                title: full_name.clone(),
-                subtitle: cin.clone().or(passport.clone()).or(Some(phone.clone())),
-                description: Some(format!("Téléphone : {phone}")),
-                archived_at,
-                archived_reason,
-                status: Some(if is_active { "Actif" } else { "Inactif" }.to_string()),
-                original_data: serde_json::json!({ "id": id, "fullName": full_name, "phone": phone, "cin": cin, "passportNumber": passport, "isActive": is_active }),
-            })
-        })
-        .map_err(|error| error.to_string())?;
-    items.extend(rows.collect::<Result<Vec<_>, _>>().map_err(|error| error.to_string())?);
-    Ok(())
-}
-
-fn append_archived_cars(connection: &Connection, items: &mut Vec<ArchiveItem>) -> Result<(), String> {
-    let mut statement = connection
-        .prepare("SELECT id, brand, model, registrationNumber, status, fuelType, transmission, archivedAt, archivedReason FROM Car WHERE archived = 1")
-        .map_err(|error| error.to_string())?;
-    let rows = statement
-        .query_map([], |row| {
-            let id: i32 = row.get(0)?;
-            let brand: String = row.get(1)?;
-            let model: String = row.get(2)?;
-            let registration: String = row.get(3)?;
-            let status: String = row.get(4)?;
-            let fuel_type: String = row.get(5)?;
-            let transmission: String = row.get(6)?;
-            let archived_at: Option<String> = row.get(7)?;
-            let archived_reason: Option<String> = row.get(8)?;
-            Ok(ArchiveItem {
-                id,
-                item_type: "car".to_string(),
-                title: format!("{brand} {model}"),
-                subtitle: Some(registration.clone()),
-                description: Some(format!("{fuel_type} | {transmission}")),
-                archived_at,
-                archived_reason,
-                status: Some(status.clone()),
-                original_data: serde_json::json!({ "id": id, "brand": brand, "model": model, "registrationNumber": registration, "status": status, "fuelType": fuel_type, "transmission": transmission }),
-            })
-        })
-        .map_err(|error| error.to_string())?;
-    items.extend(rows.collect::<Result<Vec<_>, _>>().map_err(|error| error.to_string())?);
-    Ok(())
-}
-
-fn append_archived_reservations(connection: &Connection, items: &mut Vec<ArchiveItem>) -> Result<(), String> {
+fn append_archived_reservations(
+    connection: &Connection,
+    items: &mut Vec<ArchiveItem>,
+) -> Result<(), String> {
     let mut statement = connection
         .prepare(
             "SELECT Reservation.id, Reservation.startDate, Reservation.endDate, Reservation.totalPrice, Reservation.depositAmount, Reservation.status, Reservation.archivedAt, Reservation.archivedReason, Client.fullName, Car.brand, Car.model, Car.registrationNumber
@@ -1911,11 +2088,17 @@ fn append_archived_reservations(connection: &Connection, items: &mut Vec<Archive
             })
         })
         .map_err(|error| error.to_string())?;
-    items.extend(rows.collect::<Result<Vec<_>, _>>().map_err(|error| error.to_string())?);
+    items.extend(
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|error| error.to_string())?,
+    );
     Ok(())
 }
 
-fn append_archived_payments(connection: &Connection, items: &mut Vec<ArchiveItem>) -> Result<(), String> {
+fn append_archived_payments(
+    connection: &Connection,
+    items: &mut Vec<ArchiveItem>,
+) -> Result<(), String> {
     let mut statement = connection
         .prepare(
             "SELECT Payment.id, Payment.reservationId, Payment.amount, Payment.type, Payment.method, Payment.paymentDate, Payment.archivedAt, Payment.archivedReason, Client.fullName
@@ -1949,11 +2132,17 @@ fn append_archived_payments(connection: &Connection, items: &mut Vec<ArchiveItem
             })
         })
         .map_err(|error| error.to_string())?;
-    items.extend(rows.collect::<Result<Vec<_>, _>>().map_err(|error| error.to_string())?);
+    items.extend(
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|error| error.to_string())?,
+    );
     Ok(())
 }
 
-fn append_archived_contracts(connection: &Connection, items: &mut Vec<ArchiveItem>) -> Result<(), String> {
+fn append_archived_contracts(
+    connection: &Connection,
+    items: &mut Vec<ArchiveItem>,
+) -> Result<(), String> {
     let mut statement = connection
         .prepare(
             "SELECT Contract.id, Contract.reservationId, Contract.contractNumber, Contract.status, Contract.generatedAt, Contract.archivedAt, Contract.archivedReason, Client.fullName, Car.brand, Car.model
@@ -1989,7 +2178,10 @@ fn append_archived_contracts(connection: &Connection, items: &mut Vec<ArchiveIte
             })
         })
         .map_err(|error| error.to_string())?;
-    items.extend(rows.collect::<Result<Vec<_>, _>>().map_err(|error| error.to_string())?);
+    items.extend(
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|error| error.to_string())?,
+    );
     Ok(())
 }
 
@@ -2291,10 +2483,7 @@ fn run_python_script(
     let root = project_root()?;
     let script = root.join(script_relative);
     if !script.exists() {
-        return Err(format!(
-            "Script Python introuvable : {}",
-            script.display()
-        ));
+        return Err(format!("Script Python introuvable : {}", script.display()));
     }
 
     let db = db_path()?;
@@ -2310,10 +2499,7 @@ fn run_python_script(
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!(
-            "Le script Python a échoué : {}",
-            stderr.trim()
-        ));
+        return Err(format!("Le script Python a échoué : {}", stderr.trim()));
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
@@ -2413,7 +2599,11 @@ fn get_ai_model_status(
 ) -> Result<JsonValue, String> {
     let _ = require_authenticated(&state)?;
     let models_dir = resolve_models_dir(model_path)?;
-    let expected = ["revenue_model.pkl", "demand_model.pkl", "client_segments.pkl"];
+    let expected = [
+        "revenue_model.pkl",
+        "demand_model.pkl",
+        "client_segments.pkl",
+    ];
 
     let mut found = Vec::new();
     let mut last_modified: Option<String> = None;
@@ -2474,7 +2664,10 @@ fn unix_now_seconds() -> i64 {
 }
 
 fn iso_days_ago(days_ago: i64) -> String {
-    format!("{}T00:00:00Z", format_unix_seconds(unix_now_seconds() - days_ago * 86_400))
+    format!(
+        "{}T00:00:00Z",
+        format_unix_seconds(unix_now_seconds() - days_ago * 86_400)
+    )
 }
 
 fn iso_datetime_days_ago(days_ago: i64, hour: i64) -> String {
@@ -2505,12 +2698,15 @@ fn main() {
             db: Mutex::new(db),
             auth_user: Mutex::new(None),
         })
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             get_auth_state,
             register_user,
             login_user,
             logout_user,
+            save_database_copy,
+            mount_existing_database,
             get_cars,
             create_car,
             update_car,

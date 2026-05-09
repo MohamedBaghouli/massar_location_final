@@ -1,8 +1,11 @@
+import { useEffect, useMemo, useState } from "react";
 import { Download, Eye, RotateCcw, Trash2 } from "lucide-react";
-import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { ActionIconButton } from "@/components/ui/action-buttons/ActionIconButton";
+import { AppPagination } from "@/components/ui/pagination/AppPagination";
 import type { ArchiveItem, ArchiveType } from "@/types/archive";
 import { cn } from "@/lib/utils";
+import { readStoredPageSize, writeStoredPageSize } from "@/lib/pagination";
 
 interface ArchiveDataGridProps {
   items: ArchiveItem[];
@@ -28,9 +31,29 @@ const typeClasses: Record<ArchiveType, string> = {
   reservation: "bg-orange-50 text-orange-700 ring-orange-200 dark:bg-orange-950/40 dark:text-orange-200 dark:ring-orange-900",
 };
 
+const archivePageSizeKey = "massar-pagination-page-size-archive";
+
 export function ArchiveDataGrid({ items, onDelete, onExport, onRestore, onView }: ArchiveDataGridProps) {
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(() => readStoredPageSize(archivePageSizeKey));
+  const totalPages = Math.max(1, Math.ceil(items.length / pageSize));
+  const safePage = Math.min(page, totalPages);
+  const pageItems = useMemo(() => {
+    const start = (safePage - 1) * pageSize;
+    return items.slice(start, start + pageSize);
+  }, [items, pageSize, safePage]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [items.length, pageSize]);
+
+  function handlePageSizeChange(nextPageSize: number) {
+    setPageSize(nextPageSize);
+    writeStoredPageSize(archivePageSizeKey, nextPageSize);
+  }
+
   return (
-    <Card className="overflow-hidden rounded-xl p-0 dark:border-slate-800 dark:bg-slate-900">
+    <Card className="overflow-hidden rounded-[14px] border-slate-200 bg-white p-0 shadow-sm dark:border-slate-800 dark:bg-slate-900">
       <div className="overflow-x-auto">
         <table className="w-full min-w-[980px] text-left text-sm">
           <thead className="border-b border-border bg-slate-50/80 text-xs uppercase text-slate-500 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-400">
@@ -45,7 +68,7 @@ export function ArchiveDataGrid({ items, onDelete, onExport, onRestore, onView }
             </tr>
           </thead>
           <tbody className="divide-y divide-border dark:divide-slate-800">
-            {items.map((item) => (
+            {pageItems.map((item) => (
               <tr className="bg-white transition-smooth hover:bg-blue-50/40 dark:bg-slate-900 dark:hover:bg-blue-950/20" key={`${item.type}-${item.id}`}>
                 <td className="px-5 py-4">
                   <span className={cn("inline-flex rounded-full px-2.5 py-1 text-xs font-bold ring-1", typeClasses[item.type])}>
@@ -66,18 +89,10 @@ export function ArchiveDataGrid({ items, onDelete, onExport, onRestore, onView }
                 <td className="px-5 py-4 text-slate-600 dark:text-slate-300">{item.status || "-"}</td>
                 <td className="px-5 py-4">
                   <div className="flex justify-end gap-2">
-                    <IconButton label="Voir détails" onClick={() => onView(item)}>
-                      <Eye className="h-4 w-4" />
-                    </IconButton>
-                    <IconButton label="Restaurer" onClick={() => onRestore(item)}>
-                      <RotateCcw className="h-4 w-4" />
-                    </IconButton>
-                    <IconButton label="Exporter" onClick={() => onExport(item)}>
-                      <Download className="h-4 w-4" />
-                    </IconButton>
-                    <IconButton danger label="Supprimer définitivement" onClick={() => onDelete(item)}>
-                      <Trash2 className="h-4 w-4" />
-                    </IconButton>
+                    <ActionIconButton color="blue" icon={Eye} label="Voir détails" onClick={() => onView(item)} />
+                    <ActionIconButton color="emerald" icon={RotateCcw} label="Restaurer" onClick={() => onRestore(item)} />
+                    <ActionIconButton color="emerald" icon={Download} label="Exporter" onClick={() => onExport(item)} />
+                    <ActionIconButton color="red" icon={Trash2} label="Supprimer définitivement" onClick={() => onDelete(item)} />
                   </div>
                 </td>
               </tr>
@@ -85,34 +100,15 @@ export function ArchiveDataGrid({ items, onDelete, onExport, onRestore, onView }
           </tbody>
         </table>
       </div>
+      <AppPagination
+        currentPage={safePage}
+        onPageChange={setPage}
+        onPageSizeChange={handlePageSizeChange}
+        pageSize={pageSize}
+        totalItems={items.length}
+        totalPages={totalPages}
+      />
     </Card>
-  );
-}
-
-function IconButton({
-  children,
-  danger,
-  label,
-  onClick,
-}: {
-  children: React.ReactNode;
-  danger?: boolean;
-  label: string;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      aria-label={label}
-      className={cn(
-        "inline-flex h-9 w-9 items-center justify-center rounded-lg border border-border bg-white text-slate-600 transition-smooth hover:bg-blue-50 hover:text-blue-700 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-300",
-        danger && "hover:bg-red-50 hover:text-red-700 dark:hover:bg-red-950/30 dark:hover:text-red-300",
-      )}
-      onClick={onClick}
-      title={label}
-      type="button"
-    >
-      {children}
-    </button>
   );
 }
 

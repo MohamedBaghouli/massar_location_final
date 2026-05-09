@@ -1,10 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
-  ChevronLeft,
-  ChevronRight,
   Eye,
   Heart,
-  MoreVertical,
   Pencil,
   Plus,
   Search,
@@ -17,8 +14,11 @@ import {
 } from "lucide-react";
 import { StatusBadge } from "@/components/StatusBadge";
 import { Button } from "@/components/ui/button";
+import { ActionIconButton } from "@/components/ui/action-buttons/ActionIconButton";
+import { AppPagination } from "@/components/ui/pagination/AppPagination";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { SearchableSelect } from "@/components/ui/SearchableSelect";
 import { ClientForm } from "@/pages/clients/ClientForm";
 import { createClient, deactivateClient, getClients, reactivateClient, updateClient } from "@/services/client.service";
 import { getReservations } from "@/services/reservation.service";
@@ -28,8 +28,14 @@ import { formatDrivingLicense, formatPhoneNumber, normalizeClientName } from "@/
 import { formatShortPeriod } from "@/utils/date";
 import { formatMoney } from "@/utils/money";
 import { useToast } from "@/hooks/useToast";
+import { readStoredPageSize, writeStoredPageSize } from "@/lib/pagination";
 
-const CLIENTS_PER_PAGE = 9;
+const clientsPageSizeKey = "massar-pagination-page-size-clients";
+const clientStatusFilterOptions = [
+  { value: "ALL", label: "Tous les statuts" },
+  { value: "ACTIVE", label: "Clients actifs" },
+  { value: "INACTIVE", label: "Clients inactifs" },
+];
 
 export function ClientsPage() {
   const [clients, setClients] = useState<Client[]>([]);
@@ -37,6 +43,7 @@ export function ClientsPage() {
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<"ALL" | "ACTIVE" | "INACTIVE">("ALL");
   const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(() => readStoredPageSize(clientsPageSizeKey));
   const [open, setOpen] = useState(false);
   const [editingClient, setEditingClient] = useState<Client | null>(null);
   const [detailsClient, setDetailsClient] = useState<Client | null>(null);
@@ -74,7 +81,7 @@ export function ClientsPage() {
 
   useEffect(() => {
     setPage(1);
-  }, [query, statusFilter]);
+  }, [pageSize, query, statusFilter]);
 
   useEffect(() => {
     setSelectedClientIds((current) => current.filter((id) => clients.some((client) => client.id === id)));
@@ -125,11 +132,9 @@ export function ClientsPage() {
     };
   }, [clients, locationsByClient]);
 
-  const totalPages = Math.max(1, Math.ceil(filteredClients.length / CLIENTS_PER_PAGE));
+  const totalPages = Math.max(1, Math.ceil(filteredClients.length / pageSize));
   const safePage = Math.min(page, totalPages);
-  const paginatedClients = filteredClients.slice((safePage - 1) * CLIENTS_PER_PAGE, safePage * CLIENTS_PER_PAGE);
-  const firstItem = filteredClients.length ? (safePage - 1) * CLIENTS_PER_PAGE + 1 : 0;
-  const lastItem = Math.min(safePage * CLIENTS_PER_PAGE, filteredClients.length);
+  const paginatedClients = filteredClients.slice((safePage - 1) * pageSize, safePage * pageSize);
   const selectedClientIdsSet = useMemo(() => new Set(selectedClientIds), [selectedClientIds]);
   const selectedClients = useMemo(
     () => clients.filter((client) => selectedClientIdsSet.has(client.id)),
@@ -147,6 +152,11 @@ export function ClientsPage() {
       if (allVisibleClientsSelected) return current.filter((id) => !visibleClientIds.includes(id));
       return Array.from(new Set([...current, ...visibleClientIds]));
     });
+  }
+
+  function handlePageSizeChange(nextPageSize: number) {
+    setPageSize(nextPageSize);
+    writeStoredPageSize(clientsPageSizeKey, nextPageSize);
   }
 
   async function handleSelectedClientStatus(action: "activate" | "deactivate") {
@@ -305,15 +315,13 @@ export function ClientsPage() {
               value={query}
             />
           </div>
-          <select
-            className="h-11 rounded-lg border border-slate-200 bg-white px-4 text-sm text-slate-600 shadow-sm outline-none transition-smooth focus:ring-2 focus:ring-ring focus:ring-offset-2"
-            onChange={(event) => setStatusFilter(event.target.value as "ALL" | "ACTIVE" | "INACTIVE")}
+          <SearchableSelect
+            ariaLabel="Filtrer les clients par statut"
+            className="h-11 rounded-lg border-slate-200 text-slate-600"
+            onValueChange={(nextValue) => setStatusFilter(nextValue as "ALL" | "ACTIVE" | "INACTIVE")}
+            options={clientStatusFilterOptions}
             value={statusFilter}
-          >
-            <option value="ALL">Tous les statuts</option>
-            <option value="ACTIVE">Clients actifs</option>
-            <option value="INACTIVE">Clients inactifs</option>
-          </select>
+          />
           <div className="relative">
             <Button
               className="h-11 w-full rounded-lg border-slate-200 bg-white px-5 shadow-sm"
@@ -437,13 +445,19 @@ export function ClientsPage() {
           </div>
         </div>
 
-        <div className="flex flex-col gap-3 text-sm text-muted-foreground md:flex-row md:items-center md:justify-between">
-          <p>
-            Affichage de {firstItem} à {lastItem} sur {filteredClients.length} clients
-            {selectedClientIds.length > 0 ? ` · ${selectedClientIds.length} sélectionné${selectedClientIds.length > 1 ? "s" : ""}` : ""}
+        {selectedClientIds.length > 0 && (
+          <p className="text-sm text-muted-foreground">
+            {selectedClientIds.length} sélectionné{selectedClientIds.length > 1 ? "s" : ""}
           </p>
-          <Pagination currentPage={safePage} onPageChange={setPage} totalPages={totalPages} />
-        </div>
+        )}
+        <AppPagination
+          currentPage={safePage}
+          onPageChange={setPage}
+          onPageSizeChange={handlePageSizeChange}
+          pageSize={pageSize}
+          totalItems={filteredClients.length}
+          totalPages={totalPages}
+        />
       </div>
 
       <Dialog onOpenChange={(value) => !value && setDetailsClient(null)} open={Boolean(detailsClient)}>
@@ -607,30 +621,15 @@ function ClientActions({
   onView: () => void;
 }) {
   return (
-    <div className="flex justify-end gap-1">
-      <Button aria-label="Voir" className="h-8 w-8 text-slate-500 hover:text-primary" onClick={onView} size="icon" title="Voir" variant="ghost">
-        <Eye className="h-4 w-4" />
-      </Button>
-      <Button
-        aria-label="Modifier"
-        className="h-8 w-8 text-slate-500 hover:text-primary"
-        onClick={onEdit}
-        size="icon"
-        title="Modifier"
-        variant="ghost"
-      >
-        <Pencil className="h-4 w-4" />
-      </Button>
-      <Button
-        aria-label={isClientActive(client) ? "Désactiver" : "Réactiver"}
-        className="h-8 w-8 rounded-full border border-slate-200 bg-white text-slate-400 hover:bg-slate-50 hover:text-primary"
+    <div className="flex justify-end gap-2">
+      <ActionIconButton color="blue" icon={Eye} label="Voir détails" onClick={onView} />
+      <ActionIconButton color="amber" icon={Pencil} label="Modifier" onClick={onEdit} />
+      <ActionIconButton
+        color={isClientActive(client) ? "red" : "emerald"}
+        icon={isClientActive(client) ? UserX : UserCheck}
+        label={isClientActive(client) ? "Désactiver" : "Réactiver"}
         onClick={() => (isClientActive(client) ? onDeactivate(client.id) : onReactivate(client.id))}
-        size="icon"
-        title={isClientActive(client) ? "Désactiver" : "Réactiver"}
-        variant="ghost"
-      >
-        <MoreVertical className="h-4 w-4" />
-      </Button>
+      />
     </div>
   );
 }
@@ -656,80 +655,6 @@ function LoyaltyBadge() {
       Fidèle
     </span>
   );
-}
-
-function Pagination({
-  currentPage,
-  onPageChange,
-  totalPages,
-}: {
-  currentPage: number;
-  onPageChange: (page: number) => void;
-  totalPages: number;
-}) {
-  const pages = buildPagination(currentPage, totalPages);
-
-  return (
-    <div className="flex items-center justify-end gap-2">
-      <Button
-        aria-label="Page précédente"
-        className="h-9 w-9 rounded-lg border-slate-200"
-        disabled={currentPage === 1}
-        onClick={() => onPageChange(Math.max(1, currentPage - 1))}
-        size="icon"
-        variant="outline"
-      >
-        <ChevronLeft className="h-4 w-4" />
-      </Button>
-      {pages.map((item, index) =>
-        item === "ellipsis" ? (
-          <span className="px-2 text-slate-400" key={`${item}-${index}`}>
-            ...
-          </span>
-        ) : (
-          <Button
-            className={
-              item === currentPage
-                ? "h-9 w-9 rounded-lg border-blue-200 bg-white text-primary shadow-sm"
-                : "h-9 w-9 rounded-lg border-slate-200 bg-white text-slate-600"
-            }
-            key={item}
-            onClick={() => onPageChange(item)}
-            size="icon"
-            variant="outline"
-          >
-            {item}
-          </Button>
-        ),
-      )}
-      <Button
-        aria-label="Page suivante"
-        className="h-9 w-9 rounded-lg border-slate-200"
-        disabled={currentPage === totalPages}
-        onClick={() => onPageChange(Math.min(totalPages, currentPage + 1))}
-        size="icon"
-        variant="outline"
-      >
-        <ChevronRight className="h-4 w-4" />
-      </Button>
-    </div>
-  );
-}
-
-function buildPagination(currentPage: number, totalPages: number): Array<number | "ellipsis"> {
-  if (totalPages <= 5) {
-    return Array.from({ length: totalPages }, (_, index) => index + 1);
-  }
-
-  if (currentPage <= 3) {
-    return [1, 2, 3, "ellipsis", totalPages];
-  }
-
-  if (currentPage >= totalPages - 2) {
-    return [1, "ellipsis", totalPages - 2, totalPages - 1, totalPages];
-  }
-
-  return [1, "ellipsis", currentPage, "ellipsis", totalPages];
 }
 
 function StatCard({

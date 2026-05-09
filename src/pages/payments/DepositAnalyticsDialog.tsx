@@ -29,6 +29,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { AppPagination } from "@/components/ui/pagination/AppPagination";
 import type { Car } from "@/types/car";
 import type { Client } from "@/types/client";
 import type { Payment } from "@/types/payment";
@@ -37,6 +38,7 @@ import { cn } from "@/lib/utils";
 import { formatCarName } from "@/utils/car";
 import { normalizeClientName } from "@/utils/client";
 import { formatMoney } from "@/utils/money";
+import { readStoredPageSize, writeStoredPageSize } from "@/lib/pagination";
 
 type DepositAnalyticsDialogProps = {
   cars: Car[];
@@ -90,7 +92,7 @@ export const mockDepositAnalyticsRows: DepositAnalyticsMockRow[] = [
   { client: "Skander Achour", paidAt: "24 mars 2026", refunded: 0, remaining: 800, reservation: "RES-2026-0029", status: "Bloquée", total: 800 },
 ];
 
-const pageSize = 5;
+const depositAnalyticsPageSizeKey = "massar-pagination-page-size-deposit-analytics";
 const donutColors = ["#f59e0b", "#34c38f"];
 
 export function DepositAnalyticsDialog({
@@ -104,6 +106,7 @@ export function DepositAnalyticsDialog({
 }: DepositAnalyticsDialogProps) {
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(() => readStoredPageSize(depositAnalyticsPageSizeKey));
   const clientsById = useMemo(() => new Map(clients.map((client) => [client.id, client])), [clients]);
   const carsById = useMemo(() => new Map(cars.map((car) => [car.id, car])), [cars]);
   const rows = useMemo(() => buildDepositRows(reservations, payments, clientsById, carsById), [carsById, clientsById, payments, reservations]);
@@ -128,6 +131,12 @@ export function DepositAnalyticsDialog({
 
   function updateQuery(value: string) {
     setQuery(value);
+    setPage(1);
+  }
+
+  function handlePageSizeChange(nextPageSize: number) {
+    setPageSize(nextPageSize);
+    writeStoredPageSize(depositAnalyticsPageSizeKey, nextPageSize);
     setPage(1);
   }
 
@@ -294,7 +303,14 @@ export function DepositAnalyticsDialog({
                     </div>
                   </div>
                   <DepositDataGrid onRefund={onRefund} rows={paginatedRows} />
-                  <DepositPagination currentPage={safePage} onPageChange={setPage} totalPages={totalPages} />
+                  <AppPagination
+                    currentPage={safePage}
+                    onPageChange={setPage}
+                    onPageSizeChange={handlePageSizeChange}
+                    pageSize={pageSize}
+                    totalItems={filteredRows.length}
+                    totalPages={totalPages}
+                  />
                 </section>
               </div>
             )}
@@ -449,43 +465,6 @@ function DepositDataGrid({ onRefund, rows }: { onRefund: (reservationId: number)
   );
 }
 
-function DepositPagination({
-  currentPage,
-  onPageChange,
-  totalPages,
-}: {
-  currentPage: number;
-  onPageChange: (page: number) => void;
-  totalPages: number;
-}) {
-  return (
-    <div className="flex items-center justify-end gap-2 border-t border-slate-200 px-5 py-4 dark:border-slate-800">
-      <Button className="h-9 rounded-xl" disabled={currentPage === 1} onClick={() => onPageChange(currentPage - 1)} type="button" variant="outline">
-        Précédent
-      </Button>
-      {Array.from({ length: totalPages }, (_, index) => index + 1).map((page) => (
-        <Button
-          className={cn(
-            "h-9 w-9 rounded-xl",
-            currentPage === page
-              ? "border-blue-600 bg-blue-600 text-white hover:bg-blue-700"
-              : "border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900",
-          )}
-          key={page}
-          onClick={() => onPageChange(page)}
-          type="button"
-          variant="outline"
-        >
-          {page}
-        </Button>
-      ))}
-      <Button className="h-9 rounded-xl" disabled={currentPage === totalPages} onClick={() => onPageChange(currentPage + 1)} type="button" variant="outline">
-        Suivant
-      </Button>
-    </div>
-  );
-}
-
 function DepositEmptyState({ onBack }: { onBack: () => void }) {
   return (
     <div className="flex min-h-[62vh] flex-col items-center justify-center text-center">
@@ -533,11 +512,11 @@ function DepositCell({ children, className }: { children: React.ReactNode; class
 }
 
 function DepositStatusBadge({ status }: { status: DepositStatus }) {
-  const classes = {
-    Bloquée: "bg-orange-50 text-orange-700 ring-orange-200 dark:bg-orange-950/40 dark:text-orange-300 dark:ring-orange-900",
+  const classes: Record<DepositStatus, string> = {
+    "Bloquée": "bg-orange-50 text-orange-700 ring-orange-200 dark:bg-orange-950/40 dark:text-orange-300 dark:ring-orange-900",
     Partielle: "bg-yellow-50 text-yellow-700 ring-yellow-200 dark:bg-yellow-950/40 dark:text-yellow-300 dark:ring-yellow-900",
-    Remboursée: "bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:ring-emerald-900",
-  }[status];
+    "Remboursée": "bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:ring-emerald-900",
+  };
 
   return <span className={cn("inline-flex rounded-lg px-2.5 py-1 text-xs font-bold ring-1", classes)}>{status}</span>;
 }

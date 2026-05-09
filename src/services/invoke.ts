@@ -90,6 +90,10 @@ function invokeFallback<T>(command: string, args?: Record<string, unknown>): T {
     throw new Error("Authentification requise.");
   }
 
+  if (command === "save_database_copy" || command === "mount_existing_database") {
+    throw new Error("Cette action est disponible uniquement dans l'application desktop.");
+  }
+
   if (command === "seed_ai_sample_data") {
     return seedFallbackAIData() as T;
   }

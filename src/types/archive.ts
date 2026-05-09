@@ -1,4 +1,5 @@
 export type ArchiveType = "client" | "car" | "reservation" | "payment" | "contract";
+export type CurrentArchiveType = "reservation" | "payment" | "contract";
 
 export interface ArchiveItem {
   id: number;

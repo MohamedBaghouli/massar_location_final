@@ -163,6 +163,310 @@
   }
 }
 
+@layer components {
+  .archive-dog-stage {
+    position: relative;
+    width: 240px;
+    height: 240px;
+    margin-bottom: 24px;
+    display: grid;
+    place-items: center;
+  }
+
+  .archive-dog-halo {
+    position: absolute;
+    inset: 0;
+    border-radius: 9999px;
+    background: radial-gradient(circle at center, rgba(39, 70, 214, 0.1), rgba(39, 70, 214, 0) 65%);
+    animation: archive-dog-halo 3.6s ease-in-out infinite;
+  }
+
+  .archive-dog-halo::after {
+    content: "";
+    position: absolute;
+    inset: 18%;
+    border-radius: 9999px;
+    background: radial-gradient(circle at center, rgba(245, 184, 66, 0.18), rgba(245, 184, 66, 0) 70%);
+    animation: archive-dog-halo 3.6s ease-in-out infinite reverse;
+  }
+
+  .archive-dog-shadow {
+    position: absolute;
+    bottom: 14px;
+    left: 50%;
+    z-index: 1;
+    width: 110px;
+    height: 14px;
+    border-radius: 9999px;
+    background: radial-gradient(ellipse at center, rgba(15, 31, 61, 0.22), rgba(15, 31, 61, 0) 70%);
+    animation: archive-dog-shadow 2.8s ease-in-out infinite;
+  }
+
+  .archive-dog-svg {
+    position: relative;
+    z-index: 2;
+    width: 200px;
+    height: 220px;
+    overflow: visible;
+    cursor: pointer;
+    filter: drop-shadow(0 8px 14px rgba(15, 31, 61, 0.18));
+    transform-origin: 50% 95%;
+    animation: archive-dog-float 3.2s ease-in-out infinite;
+  }
+
+  .archive-dog-head {
+    transform-origin: 100px 105px;
+    animation:
+      archive-dog-head-bob 2.6s ease-in-out infinite,
+      archive-dog-head-tilt 7s ease-in-out infinite;
+  }
+
+  .archive-dog-ear-left {
+    transform-origin: 55px 55px;
+    animation: archive-dog-ear-left 1.3s ease-in-out infinite;
+  }
+
+  .archive-dog-ear-right {
+    transform-origin: 145px 55px;
+    animation: archive-dog-ear-right 1.3s ease-in-out infinite;
+  }
+
+  .archive-dog-tail {
+    transform-origin: 0 0;
+    animation: archive-dog-tail 0.9s ease-in-out infinite;
+  }
+
+  .archive-dog-pupil {
+    transform-box: fill-box;
+    transform-origin: center;
+    transition: transform 120ms ease-out;
+    transform: translate(var(--px, 0), var(--py, 0));
+  }
+
+  .archive-dog-lid {
+    animation: archive-dog-blink 4.3s ease-in-out infinite;
+    transform-origin: center top;
+  }
+
+  .archive-dog-lid-right {
+    animation-delay: 40ms;
+  }
+
+  .archive-dog-tongue {
+    transform-box: fill-box;
+    transform-origin: 50% 0%;
+    animation: archive-dog-tongue 5.5s ease-in-out infinite;
+    opacity: 0;
+  }
+
+  .archive-dog-front-legs {
+    transform-box: fill-box;
+    transform-origin: 50% 100%;
+    animation: archive-dog-legs 2.6s ease-in-out infinite;
+  }
+
+  .archive-dog-svg.shake .archive-dog-head {
+    animation:
+      archive-dog-head-bob 2.6s ease-in-out infinite,
+      archive-dog-head-shake 0.6s ease-in-out;
+  }
+
+  .archive-dog-sparkle {
+    position: absolute;
+    z-index: 3;
+    width: 14px;
+    height: 14px;
+    color: #2746d6;
+    opacity: 0;
+    animation: archive-dog-sparkle 3.2s ease-in-out infinite;
+  }
+
+  .archive-dog-sparkle:nth-of-type(1) {
+    top: 18%;
+    left: 12%;
+  }
+
+  .archive-dog-sparkle:nth-of-type(2) {
+    top: 30%;
+    right: 8%;
+    width: 18px;
+    height: 18px;
+    color: #f5b842;
+    animation-delay: 0.8s;
+  }
+
+  .archive-dog-sparkle:nth-of-type(3) {
+    top: 60%;
+    left: 4%;
+    width: 10px;
+    height: 10px;
+    color: #6a4fcf;
+    animation-delay: 1.6s;
+  }
+
+  .archive-dog-sparkle:nth-of-type(4) {
+    top: 8%;
+    right: 22%;
+    color: #1f9d55;
+    animation-delay: 2.2s;
+  }
+
+  @keyframes archive-dog-halo {
+    0%, 100% {
+      transform: scale(0.92);
+      opacity: 0.7;
+    }
+
+    50% {
+      transform: scale(1.06);
+      opacity: 1;
+    }
+  }
+
+  @keyframes archive-dog-shadow {
+    0%, 100% {
+      transform: translateX(-50%) scale(1);
+      opacity: 0.7;
+    }
+
+    50% {
+      transform: translateX(-50%) scale(0.78);
+      opacity: 0.45;
+    }
+  }
+
+  @keyframes archive-dog-float {
+    0%, 100% {
+      transform: translateY(0);
+    }
+
+    50% {
+      transform: translateY(-4px);
+    }
+  }
+
+  @keyframes archive-dog-head-bob {
+    0%, 100% {
+      transform: translateY(0);
+    }
+
+    50% {
+      transform: translateY(-2px);
+    }
+  }
+
+  @keyframes archive-dog-head-tilt {
+    0%, 60%, 100% {
+      rotate: 0deg;
+    }
+
+    70%, 80% {
+      rotate: -8deg;
+    }
+
+    90% {
+      rotate: 4deg;
+    }
+  }
+
+  @keyframes archive-dog-ear-left {
+    0%, 100% {
+      rotate: 0deg;
+    }
+
+    50% {
+      rotate: -8deg;
+    }
+  }
+
+  @keyframes archive-dog-ear-right {
+    0%, 100% {
+      rotate: 0deg;
+    }
+
+    50% {
+      rotate: 8deg;
+    }
+  }
+
+  @keyframes archive-dog-tail {
+    0%, 100% {
+      transform: translate(148px, 155px) rotate(-20deg);
+    }
+
+    50% {
+      transform: translate(148px, 155px) rotate(20deg);
+    }
+  }
+
+  @keyframes archive-dog-blink {
+    0%, 92%, 100% {
+      height: 0;
+    }
+
+    94%, 96% {
+      height: 18px;
+    }
+  }
+
+  @keyframes archive-dog-tongue {
+    0%, 70%, 100% {
+      transform: scaleY(0);
+      opacity: 0;
+    }
+
+    78%, 90% {
+      transform: scaleY(1);
+      opacity: 1;
+    }
+  }
+
+  @keyframes archive-dog-legs {
+    0%, 100% {
+      transform: scaleY(1);
+    }
+
+    50% {
+      transform: scaleY(1.012);
+    }
+  }
+
+  @keyframes archive-dog-head-shake {
+    0%, 100% {
+      rotate: 0deg;
+    }
+
+    20% {
+      rotate: -14deg;
+    }
+
+    50% {
+      rotate: 12deg;
+    }
+
+    80% {
+      rotate: -6deg;
+    }
+  }
+
+  @keyframes archive-dog-sparkle {
+    0%, 100% {
+      transform: scale(0.4) rotate(0);
+      opacity: 0;
+    }
+
+    20% {
+      transform: scale(1) rotate(45deg);
+      opacity: 1;
+    }
+
+    40% {
+      transform: scale(0.4) rotate(90deg);
+      opacity: 0;
+    }
+  }
+}
+
 @layer utilities {
   /* Stagger delay utilities for cascading animations */
   .delay-75 {
@@ -203,6 +507,41 @@
   .transition-smooth-500 {
     @apply transition-all duration-500;
     transition-timing-function: cubic-bezier(0.25, 0.46, 0.45, 0.94);
+  }
+
+  .modal-scrollbar {
+    scrollbar-width: thin;
+    scrollbar-color: rgb(148 163 184) rgb(226 232 240);
+  }
+
+  .modal-scrollbar::-webkit-scrollbar {
+    width: 0.5rem;
+  }
+
+  .modal-scrollbar::-webkit-scrollbar-track {
+    border-radius: 9999px;
+    background: rgb(226 232 240);
+  }
+
+  .modal-scrollbar::-webkit-scrollbar-thumb {
+    border-radius: 9999px;
+    background: rgb(148 163 184);
+  }
+
+  .modal-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: rgb(100 116 139);
+  }
+
+  .dark .modal-scrollbar {
+    scrollbar-color: rgb(100 116 139) rgb(51 65 85);
+  }
+
+  .dark .modal-scrollbar::-webkit-scrollbar-track {
+    background: rgb(51 65 85);
+  }
+
+  .dark .modal-scrollbar::-webkit-scrollbar-thumb {
+    background: rgb(100 116 139);
   }
 
   /* Loading skeleton shimmer effect */

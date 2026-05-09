@@ -19,6 +19,7 @@ import {
 import { PageHeader } from "@/app/layout";
 import { Button } from "@/components/ui/button";
 import { Card, CardTitle, CardValue } from "@/components/ui/card";
+import { AppPagination } from "@/components/ui/pagination/AppPagination";
 import { useToast } from "@/hooks/useToast";
 import {
   getAIModelStatus,
@@ -34,6 +35,11 @@ import type {
   AIModelStatus,
 } from "@/types/aiForecast";
 import { formatMoney } from "@/utils/money";
+import { normalizeDisplayText } from "@/utils/text";
+import { readStoredPageSize, writeStoredPageSize } from "@/lib/pagination";
+
+const aiTopCarsPageSizeKey = "massar-pagination-page-size-ai-top-cars";
+const aiSegmentsPageSizeKey = "massar-pagination-page-size-ai-segments";
 
 export function AIForecastPage() {
   const { showToast } = useToast();
@@ -485,6 +491,18 @@ function DemandChartCard({ points }: { points: AIDailyPoint[] }) {
 }
 
 function TopCarsCard({ cars }: { cars: AIForecastResultSuccess["topCars"] }) {
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(() => readStoredPageSize(aiTopCarsPageSizeKey));
+  const totalPages = Math.max(1, Math.ceil(cars.length / pageSize));
+  const safePage = Math.min(page, totalPages);
+  const pageCars = cars.slice((safePage - 1) * pageSize, safePage * pageSize);
+
+  function handlePageSizeChange(nextPageSize: number) {
+    setPageSize(nextPageSize);
+    writeStoredPageSize(aiTopCarsPageSizeKey, nextPageSize);
+    setPage(1);
+  }
+
   return (
     <Card className="dark:bg-slate-900 dark:border-slate-800">
       <CardTitle className="mb-4 text-base font-semibold text-foreground">
@@ -494,7 +512,7 @@ function TopCarsCard({ cars }: { cars: AIForecastResultSuccess["topCars"] }) {
         <p className="text-sm text-muted-foreground">Pas encore de prédiction par voiture.</p>
       ) : (
         <ul className="space-y-3">
-          {cars.map((car) => (
+          {pageCars.map((car) => (
             <li
               className="flex items-center justify-between gap-3 rounded-md border border-border bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-950"
               key={car.carName}
@@ -520,11 +538,31 @@ function TopCarsCard({ cars }: { cars: AIForecastResultSuccess["topCars"] }) {
           ))}
         </ul>
       )}
+      <AppPagination
+        currentPage={safePage}
+        onPageChange={setPage}
+        onPageSizeChange={handlePageSizeChange}
+        pageSize={pageSize}
+        totalItems={cars.length}
+        totalPages={totalPages}
+      />
     </Card>
   );
 }
 
 function SegmentsCard({ segments }: { segments: AIClientSegment[] }) {
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(() => readStoredPageSize(aiSegmentsPageSizeKey));
+  const totalPages = Math.max(1, Math.ceil(segments.length / pageSize));
+  const safePage = Math.min(page, totalPages);
+  const pageSegments = segments.slice((safePage - 1) * pageSize, safePage * pageSize);
+
+  function handlePageSizeChange(nextPageSize: number) {
+    setPageSize(nextPageSize);
+    writeStoredPageSize(aiSegmentsPageSizeKey, nextPageSize);
+    setPage(1);
+  }
+
   return (
     <Card className="dark:bg-slate-900 dark:border-slate-800">
       <CardTitle className="mb-4 text-base font-semibold text-foreground">
@@ -534,20 +572,28 @@ function SegmentsCard({ segments }: { segments: AIClientSegment[] }) {
         <p className="text-sm text-muted-foreground">Pas encore de segmentation disponible.</p>
       ) : (
         <ul className="grid gap-3 sm:grid-cols-2">
-          {segments.map((segment) => (
+          {pageSegments.map((segment) => (
             <li
               className="rounded-md border border-border bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-950"
               key={segment.name}
             >
-              <p className="text-sm font-semibold text-foreground">{segment.name}</p>
+              <p className="text-sm font-semibold text-foreground">{normalizeDisplayText(segment.name)}</p>
               <p className="text-xl font-semibold text-blue-600 dark:text-blue-400">
                 {segment.count}
               </p>
-              <p className="mt-1 text-xs text-muted-foreground">{segment.description}</p>
+              <p className="mt-1 text-xs text-muted-foreground">{normalizeDisplayText(segment.description)}</p>
             </li>
           ))}
         </ul>
       )}
+      <AppPagination
+        currentPage={safePage}
+        onPageChange={setPage}
+        onPageSizeChange={handlePageSizeChange}
+        pageSize={pageSize}
+        totalItems={segments.length}
+        totalPages={totalPages}
+      />
     </Card>
   );
 }
@@ -570,7 +616,7 @@ function RecommendationsCard({ recommendations }: { recommendations: string[] })
             <span className="mt-0.5 inline-flex h-5 w-5 items-center justify-center rounded-full bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300">
               {index + 1}
             </span>
-            <span>{item}</span>
+            <span>{normalizeDisplayText(item)}</span>
           </li>
         ))}
       </ul>

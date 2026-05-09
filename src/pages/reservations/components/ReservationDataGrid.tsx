@@ -1,12 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import {
+  Archive,
   Ban,
   CarFront,
   CheckCircle2,
-  ChevronLeft,
-  ChevronRight,
   Eye,
-  MoreHorizontal,
   Pencil,
   Play,
   Plus,
@@ -14,6 +12,8 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { ActionIconButton } from "@/components/ui/action-buttons/ActionIconButton";
+import { AppPagination } from "@/components/ui/pagination/AppPagination";
 import type { Reservation } from "@/types/reservation";
 import { formatCarName, formatRegistrationNumber } from "@/utils/car";
 import { normalizeClientName } from "@/utils/client";
@@ -28,24 +28,28 @@ import {
   type ReservationViewModel,
 } from "@/pages/reservations/components/reservationViewUtils";
 import { useToast } from "@/hooks/useToast";
+import { readStoredPageSize, writeStoredPageSize } from "@/lib/pagination";
 
 interface ReservationDataGridProps {
   items: ReservationViewModel[];
+  onArchive: (reservation: Reservation) => void;
+  onArchiveSelected: (reservations: Reservation[]) => void | Promise<void>;
   onCreate: () => void;
   onEdit: (reservation: Reservation) => void;
   onSelect: (reservation: Reservation) => void;
   onStatusChange: (id: number, status: Reservation["status"]) => void | Promise<void>;
 }
 
-const pageSizes = [10, 20, 50];
+const reservationsPageSizeKey = "massar-pagination-page-size-reservations";
 
-export function ReservationDataGrid({ items, onCreate, onEdit, onSelect, onStatusChange }: ReservationDataGridProps) {
+export function ReservationDataGrid({ items, onArchive, onArchiveSelected, onCreate, onEdit, onSelect, onStatusChange }: ReservationDataGridProps) {
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(10);
+  const [pageSize, setPageSize] = useState(() => readStoredPageSize(reservationsPageSizeKey));
   const [selectedReservationIds, setSelectedReservationIds] = useState<number[]>([]);
   const [bulkActionsOpen, setBulkActionsOpen] = useState(false);
   const { showToast } = useToast();
   const totalPages = Math.max(1, Math.ceil(items.length / pageSize));
+  const safePage = Math.min(page, totalPages);
 
   useEffect(() => {
     setPage(1);
@@ -56,16 +60,16 @@ export function ReservationDataGrid({ items, onCreate, onEdit, onSelect, onStatu
   }, [items]);
 
   const pageItems = useMemo(() => {
-    const start = (page - 1) * pageSize;
+    const start = (safePage - 1) * pageSize;
     return items.slice(start, start + pageSize);
-  }, [items, page, pageSize]);
+  }, [items, pageSize, safePage]);
 
   const selectedReservationIdsSet = useMemo(() => new Set(selectedReservationIds), [selectedReservationIds]);
   const visibleReservationIds = pageItems.map((item) => item.reservation.id);
   const allVisibleReservationsSelected =
     visibleReservationIds.length > 0 && visibleReservationIds.every((id) => selectedReservationIdsSet.has(id));
-  const displayStart = items.length ? (page - 1) * pageSize + 1 : 0;
-  const displayEnd = Math.min(page * pageSize, items.length);
+  const displayStart = items.length ? (safePage - 1) * pageSize + 1 : 0;
+  const displayEnd = Math.min(safePage * pageSize, items.length);
 
   function toggleReservationSelection(id: number) {
     setSelectedReservationIds((current) => (current.includes(id) ? current.filter((item) => item !== id) : [...current, id]));
@@ -78,6 +82,11 @@ export function ReservationDataGrid({ items, onCreate, onEdit, onSelect, onStatu
     });
   }
 
+  function handlePageSizeChange(nextPageSize: number) {
+    setPageSize(nextPageSize);
+    writeStoredPageSize(reservationsPageSizeKey, nextPageSize);
+  }
+
   async function handleBulkStatus(status: Reservation["status"]) {
     if (!selectedReservationIds.length) {
       showToast({ message: "Cochez au moins une réservation dans la liste.", title: "Aucune sélection", type: "info" });
@@ -86,6 +95,21 @@ export function ReservationDataGrid({ items, onCreate, onEdit, onSelect, onStatu
     }
 
     await Promise.all(selectedReservationIds.map((id) => onStatusChange(id, status)));
+    setSelectedReservationIds([]);
+    setBulkActionsOpen(false);
+  }
+
+  async function handleBulkArchive() {
+    if (!selectedReservationIds.length) {
+      showToast({ message: "Cochez au moins une réservation dans la liste.", title: "Aucune sélection", type: "info" });
+      setBulkActionsOpen(false);
+      return;
+    }
+
+    const selectedReservations = items
+      .filter((item) => selectedReservationIds.includes(item.reservation.id))
+      .map((item) => item.reservation);
+    await onArchiveSelected(selectedReservations);
     setSelectedReservationIds([]);
     setBulkActionsOpen(false);
   }
@@ -128,6 +152,10 @@ export function ReservationDataGrid({ items, onCreate, onEdit, onSelect, onStatu
                 <Ban className="h-4 w-4" />
                 Annuler sélection
               </BulkActionButton>
+              <BulkActionButton disabled={!selectedReservationIds.length} onClick={() => void handleBulkArchive()}>
+                <Archive className="h-4 w-4" />
+                Archiver sélection
+              </BulkActionButton>
             </div>
           )}
         </div>
@@ -162,6 +190,7 @@ export function ReservationDataGrid({ items, onCreate, onEdit, onSelect, onStatu
                 <ReservationRow
                   item={item}
                   key={item.reservation.id}
+                  onArchive={onArchive}
                   onEdit={onEdit}
                   onSelect={onSelect}
                   onStatusChange={onStatusChange}
@@ -199,51 +228,15 @@ export function ReservationDataGrid({ items, onCreate, onEdit, onSelect, onStatu
             ? ` · ${selectedReservationIds.length} sélectionnée${selectedReservationIds.length > 1 ? "s" : ""}`
             : ""}
         </p>
-        <div className="flex flex-wrap items-center gap-3">
-          <select
-            className="h-10 rounded-lg border border-input bg-white px-3 text-sm outline-none dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
-            onChange={(event) => setPageSize(Number(event.target.value))}
-            value={pageSize}
-          >
-            {pageSizes.map((size) => (
-              <option key={size} value={size}>
-                {size} / page
-              </option>
-            ))}
-          </select>
-          <div className="inline-flex items-center gap-2">
-            <Button disabled={page <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))} size="icon" type="button" variant="outline">
-              <ChevronLeft className="h-4 w-4" />
-            </Button>
-            {getPageNumbers(page, totalPages).map((pageNumber, index) =>
-              pageNumber === "ellipsis" ? (
-                <span className="px-2 text-sm text-muted-foreground" key={`ellipsis-${index}`}>
-                  ...
-                </span>
-              ) : (
-                <button
-                  className={cn(
-                    "h-10 min-w-10 rounded-lg border border-border px-3 text-sm font-semibold transition-smooth hover:bg-muted dark:border-slate-800",
-                    page === pageNumber && "border-blue-600 bg-blue-600 text-white hover:bg-blue-600",
-                  )}
-                  key={pageNumber}
-                  onClick={() => setPage(pageNumber)}
-                  type="button"
-                >
-                  {pageNumber}
-                </button>
-              ),
-            )}
-            <Button
-              disabled={page >= totalPages}
-              onClick={() => setPage((value) => Math.min(totalPages, value + 1))}
-              size="icon"
-              type="button"
-              variant="outline"
-            >
-              <ChevronRight className="h-4 w-4" />
-            </Button>
-          </div>
+        <div className="min-w-0 flex-1 lg:flex lg:justify-end">
+          <AppPagination
+            currentPage={safePage}
+            onPageChange={setPage}
+            onPageSizeChange={handlePageSizeChange}
+            pageSize={pageSize}
+            totalItems={items.length}
+            totalPages={totalPages}
+          />
         </div>
       </div>
     </Card>
@@ -252,6 +245,7 @@ export function ReservationDataGrid({ items, onCreate, onEdit, onSelect, onStatu
 
 function ReservationRow({
   item,
+  onArchive,
   onEdit,
   onSelect,
   onStatusChange,
@@ -259,6 +253,7 @@ function ReservationRow({
   selected,
 }: {
   item: ReservationViewModel;
+  onArchive: (reservation: Reservation) => void;
   onEdit: (reservation: Reservation) => void;
   onSelect: (reservation: Reservation) => void;
   onStatusChange: (id: number, status: Reservation["status"]) => void | Promise<void>;
@@ -347,30 +342,18 @@ function ReservationRow({
       </td>
       <td className="px-5 py-5">
         <div className="flex justify-end gap-2" onClick={(event) => event.stopPropagation()}>
-          <IconButton label="Voir détails" onClick={() => onSelect(reservation)}>
-            <Eye className="h-4 w-4" />
-          </IconButton>
-          <IconButton label="Modifier" onClick={() => onEdit(reservation)}>
-            <Pencil className="h-4 w-4" />
-          </IconButton>
+          <ActionIconButton color="blue" icon={Eye} label="Voir détails" onClick={() => onSelect(reservation)} />
+          <ActionIconButton color="amber" icon={Pencil} label="Modifier" onClick={() => onEdit(reservation)} />
           {(reservation.status === "EN_ATTENTE" || reservation.status === "RESERVED") && (
-            <IconButton label="Démarrer" onClick={() => void onStatusChange(reservation.id, "ONGOING")}>
-              <Play className="h-4 w-4" />
-            </IconButton>
+            <ActionIconButton color="emerald" icon={Play} label="Démarrer" onClick={() => void onStatusChange(reservation.id, "ONGOING")} />
           )}
           {reservation.status === "ONGOING" && (
-            <IconButton label="Terminer" onClick={() => void onStatusChange(reservation.id, "COMPLETED")}>
-              <CheckCircle2 className="h-4 w-4" />
-            </IconButton>
+            <ActionIconButton color="emerald" icon={CheckCircle2} label="Terminer" onClick={() => void onStatusChange(reservation.id, "COMPLETED")} />
           )}
           {reservation.status !== "CANCELLED" && reservation.status !== "COMPLETED" && (
-            <IconButton label="Annuler" onClick={() => void onStatusChange(reservation.id, "CANCELLED")}>
-              <Ban className="h-4 w-4" />
-            </IconButton>
+            <ActionIconButton color="red" icon={Ban} label="Annuler" onClick={() => void onStatusChange(reservation.id, "CANCELLED")} />
           )}
-          <IconButton label="Plus d'actions" onClick={() => onSelect(reservation)}>
-            <MoreHorizontal className="h-4 w-4" />
-          </IconButton>
+          <ActionIconButton color="violet" icon={Archive} label="Archiver" onClick={() => onArchive(reservation)} />
         </div>
       </td>
     </tr>
@@ -423,20 +406,6 @@ function ReservationStatusBadge({ status }: { status: Reservation["status"] }) {
   );
 }
 
-function IconButton({ children, label, onClick }: { children: React.ReactNode; label: string; onClick: () => void }) {
-  return (
-    <button
-      aria-label={label}
-      className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-border bg-white text-slate-600 transition-smooth hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-300 dark:hover:border-blue-900 dark:hover:bg-blue-950/30 dark:hover:text-blue-200"
-      onClick={onClick}
-      title={label}
-      type="button"
-    >
-      {children}
-    </button>
-  );
-}
-
 function BulkActionButton({
   children,
   danger,
@@ -471,18 +440,3 @@ function getDepositStatus(amount: number, collected: number, refunded: number) {
   return "À encaisser";
 }
 
-function getPageNumbers(page: number, totalPages: number): Array<number | "ellipsis"> {
-  if (totalPages <= 5) return Array.from({ length: totalPages }, (_, index) => index + 1);
-
-  const numbers = new Set([1, totalPages, page - 1, page, page + 1]);
-  const sorted = [...numbers].filter((number) => number >= 1 && number <= totalPages).sort((a, b) => a - b);
-  const result: Array<number | "ellipsis"> = [];
-
-  sorted.forEach((number, index) => {
-    const previous = sorted[index - 1];
-    if (previous && number - previous > 1) result.push("ellipsis");
-    result.push(number);
-  });
-
-  return result;
-}

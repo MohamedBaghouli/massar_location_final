@@ -4,6 +4,7 @@ import { getStatusLabel } from "@/components/StatusBadge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { SearchableSelect } from "@/components/ui/SearchableSelect";
 import type { Car, CreateCarDto } from "@/types/car";
 import {
   formatCarName,
@@ -29,9 +30,11 @@ type CarFormValues = Omit<CreateCarDto, "registrationNumber"> & {
   registrationRight: string;
 };
 
-const selectClassName = "h-10 w-full rounded-md border border-input bg-white px-3 text-sm";
 const fuelTypes = ["Essence", "Diesel", "Hybride", "Électrique"];
 const transmissions = ["Manuelle", "Automatique"];
+
+const fuelTypeOptions = fuelTypes.map((fuelType) => ({ value: fuelType, label: fuelType }));
+const transmissionOptions = transmissions.map((transmission) => ({ value: transmission, label: transmission }));
 
 export function CarForm({ currentCarId, defaultValues, existingCars = [], onSubmit }: CarFormProps) {
   const initialRegistration = splitRegistrationNumber(defaultValues?.registrationNumber);
@@ -178,24 +181,26 @@ export function CarForm({ currentCarId, defaultValues, existingCars = [], onSubm
 
       <div>
         <Label>Type de carburant</Label>
-        <select className={selectClassName} {...register("fuelType")}>
-          {fuelTypes.map((fuelType) => (
-            <option key={fuelType} value={fuelType}>
-              {fuelType}
-            </option>
-          ))}
-        </select>
+        <input type="hidden" {...register("fuelType")} />
+        <SearchableSelect
+          ariaLabel="Sélectionner le type de carburant"
+          onValueChange={(nextValue) => setValue("fuelType", nextValue, { shouldDirty: true, shouldValidate: true })}
+          options={fuelTypeOptions}
+          searchPlaceholder="Rechercher un carburant..."
+          value={watch("fuelType")}
+        />
       </div>
 
       <div>
         <Label>Transmission</Label>
-        <select className={selectClassName} {...register("transmission")}>
-          {transmissions.map((transmission) => (
-            <option key={transmission} value={transmission}>
-              {transmission}
-            </option>
-          ))}
-        </select>
+        <input type="hidden" {...register("transmission")} />
+        <SearchableSelect
+          ariaLabel="Sélectionner la transmission"
+          onValueChange={(nextValue) => setValue("transmission", nextValue, { shouldDirty: true, shouldValidate: true })}
+          options={transmissionOptions}
+          searchPlaceholder="Rechercher une transmission..."
+          value={watch("transmission")}
+        />
       </div>
 
       <div>

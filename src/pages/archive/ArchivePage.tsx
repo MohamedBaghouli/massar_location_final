@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
-import { Archive, Download, Settings, Sparkles, Trash2 } from "lucide-react";
+import { Archive, Download, Settings, Trash2 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { ArchiveDataGrid } from "@/pages/archive/components/ArchiveDataGrid";
 import { ArchiveDetailsDrawer } from "@/pages/archive/components/ArchiveDetailsDrawer";
+import { ArchiveEmptyDog } from "@/pages/archive/components/ArchiveEmptyDog";
 import { ArchiveSearch } from "@/pages/archive/components/ArchiveSearch";
 import { ArchiveStats } from "@/pages/archive/components/ArchiveStats";
 import { ArchiveTabs, type ArchiveTab } from "@/pages/archive/components/ArchiveTabs";
@@ -68,9 +69,9 @@ export function ArchivePage() {
 
   const rovoMessage = query.trim()
     ? filteredItems.length
-      ? `J’ai trouvé ${filteredItems.length} résultat(s).`
+      ? `J'ai trouvé ${filteredItems.length} résultat${filteredItems.length > 1 ? "s" : ""}.`
       : "Aucun résultat trouvé."
-    : "Je peux vous aider à retrouver un ancien client, contrat ou paiement.";
+    : "Je peux vous aider à retrouver un ancien client, contrat, paiement ou véhicule.";
 
   async function handleSearch(nextQuery: string) {
     setQuery(nextQuery);
@@ -102,7 +103,7 @@ export function ArchivePage() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = item ? `archive-${item.type}-${item.id}.json` : "rentaldesk-archive.json";
+    link.download = item ? `archive-${item.type}-${item.id}.json` : "massar-location-archive.json";
     link.click();
     URL.revokeObjectURL(url);
   }
@@ -120,38 +121,37 @@ export function ArchivePage() {
     setCleanupOpen(false);
     await reload();
     showToast({
-      message: `${targets.length} élément(s) supprimé(s) définitivement.`,
+      message: `${targets.length} élément${targets.length > 1 ? "s" : ""} supprimé${targets.length > 1 ? "s" : ""} définitivement.`,
       title: "Nettoyage terminé",
       type: "success",
     });
   }
 
   return (
-    <div className="animate-slide-in-up space-y-5 dark:bg-slate-950">
+    <div className="animate-slide-in-up space-y-5 bg-[#f4f7fb] dark:bg-slate-950">
       <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
-        <div>
-          <div className="flex items-center gap-3">
-            <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-blue-600 text-white shadow-sm">
-              <Archive className="h-5 w-5" />
-            </span>
-            <div>
-              <h1 className="text-2xl font-bold text-slate-950 dark:text-slate-100">Archive</h1>
-              <p className="mt-1 text-sm text-muted-foreground dark:text-slate-400">
-                Consultez, recherchez et restaurez les anciens éléments de votre agence
-              </p>
-            </div>
+        <div className="flex items-center gap-3">
+          <span className="flex h-[52px] w-[52px] items-center justify-center rounded-[14px] bg-gradient-to-br from-[#3a5cf0] to-[#1f3bbf] text-white shadow-[0_6px_16px_rgba(39,70,214,0.30)]">
+            <Archive className="h-6 w-6" />
+          </span>
+          <div>
+            <h1 className="text-[28px] font-extrabold leading-tight tracking-normal text-[#0f1f3d] dark:text-slate-100">Archive</h1>
+            <p className="mt-1 text-sm text-muted-foreground dark:text-slate-400">
+              Consultez, recherchez et restaurez les anciens éléments de votre agence
+            </p>
           </div>
         </div>
+
         <div className="flex flex-wrap gap-2">
-          <Button onClick={() => handleExport()} type="button" variant="outline">
+          <Button className="rounded-[11px] border-slate-200 bg-white px-4 shadow-sm transition-smooth hover:-translate-y-0.5 hover:shadow-md dark:border-slate-800" onClick={() => handleExport()} type="button" variant="outline">
             <Download className="h-4 w-4" />
             Exporter archive
           </Button>
-          <Button onClick={() => setCleanupOpen(true)} type="button" variant="outline">
+          <Button className="rounded-[11px] border-slate-200 bg-white px-4 shadow-sm transition-smooth hover:-translate-y-0.5 hover:shadow-md dark:border-slate-800" onClick={() => setCleanupOpen(true)} type="button" variant="outline">
             <Trash2 className="h-4 w-4" />
             Nettoyer archives
           </Button>
-          <Button onClick={() => setSettingsOpen(true)} type="button" variant="outline">
+          <Button className="rounded-[11px] border-slate-200 bg-white px-4 shadow-sm transition-smooth hover:-translate-y-0.5 hover:shadow-md dark:border-slate-800" onClick={() => setSettingsOpen(true)} type="button" variant="outline">
             <Settings className="h-4 w-4" />
             Paramètres archive
           </Button>
@@ -171,16 +171,7 @@ export function ArchivePage() {
           onView={setDetailsItem}
         />
       ) : (
-        <div className="flex min-h-[360px] flex-col items-center justify-center rounded-xl border border-dashed border-border bg-white p-8 text-center dark:border-slate-800 dark:bg-slate-900">
-          <Sparkles className="h-12 w-12 text-blue-600" />
-          <h2 className="mt-4 text-xl font-bold text-slate-950 dark:text-slate-100">Aucune archive pour le moment</h2>
-          <p className="mt-2 text-sm text-muted-foreground dark:text-slate-400">
-            Les éléments supprimés ou archivés apparaîtront ici.
-          </p>
-          <Button className="mt-5" onClick={() => navigate("/")} type="button">
-            Retour au tableau de bord
-          </Button>
-        </div>
+        <ArchiveEmptyState onBack={() => navigate("/")} />
       )}
 
       <ArchiveDetailsDrawer item={detailsItem} onClose={() => setDetailsItem(null)} open={Boolean(detailsItem)} />
@@ -232,11 +223,7 @@ export function ArchivePage() {
             <Button onClick={() => setCleanupOpen(false)} type="button" variant="outline">
               Annuler
             </Button>
-            <Button
-              onClick={() => void handleCleanupArchives()}
-              type="button"
-              variant="destructive"
-            >
+            <Button onClick={() => void handleCleanupArchives()} type="button" variant="destructive">
               Confirmer nettoyage
             </Button>
           </div>
@@ -258,6 +245,22 @@ export function ArchivePage() {
           </div>
         </DialogContent>
       </Dialog>
+    </div>
+  );
+}
+
+function ArchiveEmptyState({ onBack }: { onBack: () => void }) {
+  return (
+    <div className="flex min-h-[420px] flex-col items-center justify-center overflow-hidden rounded-[14px] border-[1.5px] border-dashed border-[#d6dfee] bg-white px-6 py-14 text-center dark:border-slate-800 dark:bg-slate-900">
+      <ArchiveEmptyDog />
+
+      <h2 className="text-[22px] font-extrabold text-[#0f1f3d] dark:text-slate-100">Aucune archive pour le moment</h2>
+      <p className="mt-2 max-w-md text-[14.5px] text-muted-foreground dark:text-slate-400">
+        Les éléments supprimés ou archivés apparaîtront ici.
+      </p>
+      <Button className="mt-6 rounded-[11px] bg-[#1a2f93] px-4 shadow-[0_6px_14px_rgba(26,47,147,0.25)] hover:bg-[#142578]" onClick={onBack} type="button">
+        Retour au tableau de bord
+      </Button>
     </div>
   );
 }

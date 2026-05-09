@@ -1,4 +1,6 @@
 import { useState } from "react";
+import { open } from "@tauri-apps/plugin-dialog";
+import { Database, FolderOpen } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { PageHeader } from "@/app/layout";
 import { Button } from "@/components/ui/button";
@@ -7,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/useToast";
 import { loadAISettings, saveAISettings } from "@/services/aiForecastService";
+import { invokeCommand } from "@/services/invoke";
 import type { AISettings } from "@/types/aiForecast";
 import { notifySettingsChanged, settingsStorageKey } from "@/utils/settings";
 
@@ -23,13 +26,21 @@ type SettingsFormValues = {
   contractFolder: string;
   contractPrefix: string;
   currency: string;
+  databaseFolder: string;
   defaultDeposit: number;
+  existingDatabasePath: string;
   generalConditions: string;
   logoImage: string;
   nextContractNumber: string;
   receiptFolder: string;
   signatureImage: string;
   vatRate: number;
+};
+
+type DatabaseOperationResult = {
+  message: string;
+  path: string;
+  success: boolean;
 };
 
 const inputClassName = "h-10 w-full rounded-md border border-input bg-white px-3 text-sm";
@@ -47,7 +58,9 @@ const defaultSettings: SettingsFormValues = {
   contractFolder: "",
   contractPrefix: "",
   currency: "DT",
+  databaseFolder: "",
   defaultDeposit: 0,
+  existingDatabasePath: "",
   generalConditions: "",
   logoImage: "",
   nextContractNumber: "",
@@ -61,12 +74,15 @@ export function SettingsPage() {
   const {
     register,
     handleSubmit,
+    getValues,
     setValue,
     watch,
     formState: { errors },
   } = useForm<SettingsFormValues>({
     defaultValues: loadSettings(),
   });
+  const [databaseBusy, setDatabaseBusy] = useState<"mount" | "save" | null>(null);
+  const [databaseResult, setDatabaseResult] = useState<DatabaseOperationResult | null>(null);
 
   const logoImage = watch("logoImage");
   const signatureImage = watch("signatureImage");
@@ -90,6 +106,88 @@ export function SettingsPage() {
       showToast({ title: "Image chargée", type: "success" });
     } catch (caught) {
       showToast({ message: getErrorMessage(caught), title: "Erreur image", type: "error" });
+    }
+  }
+
+  async function handleSaveDatabaseCopy() {
+    const targetFolder = getValues("databaseFolder").trim();
+    if (!targetFolder) {
+      showToast({ message: "Indiquez un dossier local.", title: "Dossier obligatoire", type: "error" });
+      return;
+    }
+
+    setDatabaseBusy("save");
+    setDatabaseResult(null);
+    try {
+      const result = await invokeCommand<DatabaseOperationResult>("save_database_copy", { targetFolder });
+      setDatabaseResult(result);
+      showToast({ message: result.path, title: "Base enregistrée", type: "success" });
+    } catch (caught) {
+      showToast({ message: getErrorMessage(caught), title: "Erreur base de données", type: "error" });
+    } finally {
+      setDatabaseBusy(null);
+    }
+  }
+
+  async function handleMountExistingDatabase() {
+    const sourcePath = getValues("existingDatabasePath").trim();
+    if (!sourcePath) {
+      showToast({ message: "Indiquez le chemin du fichier .db.", title: "Chemin obligatoire", type: "error" });
+      return;
+    }
+
+    setDatabaseBusy("mount");
+    setDatabaseResult(null);
+    try {
+      const result = await invokeCommand<DatabaseOperationResult>("mount_existing_database", { sourcePath });
+      setDatabaseResult(result);
+      showToast({ message: result.message, title: "Base montée", type: "success" });
+    } catch (caught) {
+      showToast({ message: getErrorMessage(caught), title: "Erreur montage", type: "error" });
+    } finally {
+      setDatabaseBusy(null);
+    }
+  }
+
+  async function selectLocalBackupFolder() {
+    if (typeof window === "undefined" || !("__TAURI_INTERNALS__" in window)) {
+      showToast({ message: "La sélection est disponible uniquement dans l'application desktop.", title: "Action indisponible", type: "error" });
+      return;
+    }
+
+    try {
+      const selected = await open({
+        defaultPath: getValues("databaseFolder") || undefined,
+        directory: true,
+        multiple: false,
+        title: "Choisir le dossier des sauvegardes",
+      });
+      if (selected) {
+        setValue("databaseFolder", selected, { shouldDirty: true });
+      }
+    } catch (caught) {
+      showToast({ message: getErrorMessage(caught), title: "Erreur sélection", type: "error" });
+    }
+  }
+
+  async function selectExistingDatabase() {
+    if (typeof window === "undefined" || !("__TAURI_INTERNALS__" in window)) {
+      showToast({ message: "La sélection est disponible uniquement dans l'application desktop.", title: "Action indisponible", type: "error" });
+      return;
+    }
+
+    try {
+      const selected = await open({
+        defaultPath: getValues("existingDatabasePath") || undefined,
+        filters: [{ extensions: ["db", "sqlite", "sqlite3"], name: "Base SQLite" }],
+        multiple: false,
+        title: "Choisir une base existante",
+      });
+      if (selected) {
+        setValue("existingDatabasePath", selected, { shouldDirty: true });
+      }
+    } catch (caught) {
+      showToast({ message: getErrorMessage(caught), title: "Erreur sélection", type: "error" });
     }
   }
 
@@ -203,6 +301,45 @@ export function SettingsPage() {
             </Field>
             <CheckboxField label="Sauvegarde automatique" {...register("autoBackup")} />
           </div>
+        </SettingsSection>
+
+        <SettingsSection title="Base de données locale">
+          <div className="grid gap-4 md:grid-cols-2">
+            <Field label="Dossier local des sauvegardes">
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <Input placeholder="C:\\Users\\VotreNom\\Documents\\Massar DB" {...register("databaseFolder")} />
+                <Button className="shrink-0" onClick={() => void selectLocalBackupFolder()} title="Sélectionner un dossier" type="button" variant="outline">
+                  <FolderOpen className="h-4 w-4" />
+                  Sélectionner
+                </Button>
+              </div>
+            </Field>
+            <Field label="Base existante à monter">
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <Input placeholder="C:\\Users\\VotreNom\\Documents\\ancienne-base.db" {...register("existingDatabasePath")} />
+                <Button className="shrink-0" onClick={() => void selectExistingDatabase()} title="Sélectionner une base SQLite" type="button" variant="outline">
+                  <Database className="h-4 w-4" />
+                  Sélectionner
+                </Button>
+              </div>
+            </Field>
+          </div>
+          <div className="mt-4 flex flex-wrap items-center gap-3">
+            <Button disabled={databaseBusy !== null} onClick={() => void handleSaveDatabaseCopy()} type="button" variant="outline">
+              {databaseBusy === "save" ? "Enregistrement..." : "Enregistrer la base actuelle"}
+            </Button>
+            <Button disabled={databaseBusy !== null} onClick={() => void handleMountExistingDatabase()} type="button" variant="outline">
+              {databaseBusy === "mount" ? "Montage..." : "Monter la base existante"}
+            </Button>
+          </div>
+          {databaseResult && (
+            <p className="mt-3 break-all rounded-md border border-border bg-white px-3 py-2 text-xs text-muted-foreground">
+              {databaseResult.message} {databaseResult.path}
+            </p>
+          )}
+          <p className="mt-3 text-xs text-muted-foreground">
+            Le montage remplace la base active par le fichier choisi et crée une sauvegarde de sécurité de la base actuelle.
+          </p>
         </SettingsSection>
 
         <AISettingsSection />

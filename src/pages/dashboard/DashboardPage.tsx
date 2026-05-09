@@ -82,21 +82,30 @@ export function DashboardPage() {
     const rentedCars = cars.filter((car) => car.status === "RENTED").length;
     const maintenanceCars = cars.filter((car) => car.status === "MAINTENANCE").length;
     const ongoingReservations = reservations.filter((reservation) => reservation.status === "ONGOING").length;
+    const activeTodayCarIds = new Set(
+      reservations
+        .filter(
+          (reservation) =>
+            reservation.status !== "CANCELLED" &&
+            reservation.status !== "COMPLETED" &&
+            getLocalDateKey(reservation.startDate) <= todayKey &&
+            getLocalDateKey(reservation.endDate) >= todayKey,
+        )
+        .map((reservation) => reservation.carId),
+    );
+    const availableTodayCars = cars.filter(
+      (car) => car.status !== "MAINTENANCE" && car.status !== "UNAVAILABLE" && !activeTodayCarIds.has(car.id),
+    ).length;
+    const lateReturns = reservations.filter(
+      (reservation) => reservation.status === "ONGOING" && getLocalDateKey(reservation.endDate) < todayKey,
+    ).length;
+    const reservationsToConfirm = reservations.filter(
+      (reservation) => reservation.status === "EN_ATTENTE" && getLocalDateKey(reservation.startDate) >= todayKey,
+    ).length;
     const upcomingReservations = reservations.filter(
       (reservation) =>
         (reservation.status === "EN_ATTENTE" || reservation.status === "RESERVED") &&
         getLocalDateKey(reservation.startDate) > todayKey,
-    ).length;
-    const departuresToday = reservations.filter(
-      (reservation) =>
-        (reservation.status === "EN_ATTENTE" || reservation.status === "RESERVED") &&
-        getLocalDateKey(reservation.startDate) === todayKey,
-    ).length;
-    const returnsToday = reservations.filter(
-      (reservation) => reservation.status === "ONGOING" && getLocalDateKey(reservation.endDate) === todayKey,
-    ).length;
-    const startsToday = reservations.filter(
-      (reservation) => reservation.status === "ONGOING" && getLocalDateKey(reservation.startDate) === todayKey,
     ).length;
     const currentMonthRevenue = sumRentalPaymentsByMonth(payments, currentMonthKey);
     const previousMonthRevenue = sumRentalPaymentsByMonth(payments, previousMonthKey);
@@ -107,14 +116,14 @@ export function DashboardPage() {
     return {
       alerts,
       availableCars,
+      availableTodayCars,
       currentMonthRevenue,
-      departuresToday,
+      lateReturns,
       maintenanceCars,
       ongoingReservations,
       rentedCars,
-      returnsToday,
+      reservationsToConfirm,
       revenueTrend,
-      startsToday,
       totalCars: cars.length,
       upcomingReservations,
     };
@@ -155,11 +164,11 @@ export function DashboardPage() {
         </button>
 
         <Card>
-          <CardTitle>Aujourd'hui</CardTitle>
+          <CardTitle>Priorité aujourd'hui</CardTitle>
           <div className="mt-4 space-y-2 text-sm">
-            <TodayRow label="Départs prévus" value={stats.departuresToday} />
-            <TodayRow label="Retours prévus" value={stats.returnsToday} />
-            <TodayRow label="Locations démarrées aujourd'hui" value={stats.startsToday} />
+            <TodayRow label="Voitures disponibles aujourd'hui" value={stats.availableTodayCars} />
+            <TodayRow label="Retards de retour" value={stats.lateReturns} />
+            <TodayRow label="Réservations à confirmer" value={stats.reservationsToConfirm} />
           </div>
         </Card>
       </div>

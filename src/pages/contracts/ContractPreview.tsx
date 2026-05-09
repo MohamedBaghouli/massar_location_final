@@ -9,7 +9,6 @@ import {
   Download,
   Eye,
   FileText,
-  Pencil,
   Plus,
   Printer,
   RotateCcw,
@@ -17,9 +16,13 @@ import {
   XCircle,
 } from "lucide-react";
 import { PageHeader } from "@/app/layout";
+import { ArchiveConfirmDialog } from "@/components/archive/ArchiveConfirmDialog";
+import { ActionIconButton } from "@/components/ui/action-buttons/ActionIconButton";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { AppPagination } from "@/components/ui/pagination/AppPagination";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { SearchableSelect } from "@/components/ui/SearchableSelect";
 import { ContractPDF } from "@/pages/contracts/ContractPDF";
 import { getCars } from "@/services/car.service";
 import { getClients } from "@/services/client.service";
@@ -36,8 +39,9 @@ import { getRentalDays } from "@/utils/date";
 import { createContractPdf } from "@/utils/pdf";
 import { useToast } from "@/hooks/useToast";
 import { cn } from "@/lib/utils";
+import { readStoredPageSize, writeStoredPageSize } from "@/lib/pagination";
 
-// ─── Types ────────────────────────────────────────────────────────────────────
+// Types
 
 type DisplayStatus = "GENERATED" | "PENDING" | "SIGNED" | "EXPIRED";
 
@@ -51,14 +55,21 @@ interface ContractRow {
   secondClient?: Client;
 }
 
-const PAGE_SIZE_OPTIONS = [10, 25, 50];
+const contractsPageSizeKey = "massar-pagination-page-size-contracts";
+const contractStatusFilterOptions = [
+  { value: "ALL", label: "Tous les statuts" },
+  { value: "GENERATED", label: "Généré" },
+  { value: "PENDING", label: "En attente" },
+  { value: "SIGNED", label: "Signé" },
+  { value: "EXPIRED", label: "Expiré" },
+];
 
 const AVATAR_COLORS = [
   "bg-blue-500", "bg-violet-500", "bg-emerald-500", "bg-orange-500",
   "bg-pink-500", "bg-teal-500", "bg-indigo-500", "bg-rose-500",
 ];
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+// Helpers
 
 function computeDisplayStatus(contract: Contract, reservation?: Reservation): DisplayStatus {
   if (contract.status === "SIGNED") return "SIGNED";
@@ -143,7 +154,7 @@ function searchMatch(row: ContractRow, query: string) {
   );
 }
 
-// ─── Main component ───────────────────────────────────────────────────────────
+// Main component
 
 export function ContractPreview() {
   const [contracts, setContracts] = useState<Contract[]>([]);
@@ -151,6 +162,8 @@ export function ContractPreview() {
   const [clients, setClients] = useState<Client[]>([]);
   const [cars, setCars] = useState<Car[]>([]);
   const [selected, setSelected] = useState<Contract | null>(null);
+  const [archiveContract, setArchiveContract] = useState<Contract | null>(null);
+  const [archiveLoading, setArchiveLoading] = useState(false);
   const { showToast } = useToast();
 
   // Filters
@@ -162,7 +175,7 @@ export function ContractPreview() {
 
   // Pagination
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(10);
+  const [pageSize, setPageSize] = useState(() => readStoredPageSize(contractsPageSizeKey));
 
   useEffect(() => {
     void reload();
@@ -179,6 +192,17 @@ export function ContractPreview() {
   const reservationMap = useMemo(() => new Map(reservations.map((r) => [r.id, r])), [reservations]);
   const clientMap = useMemo(() => new Map(clients.map((c) => [c.id, c])), [clients]);
   const carMap = useMemo(() => new Map(cars.map((c) => [c.id, c])), [cars]);
+  const carFilterOptions = useMemo(
+    () => [
+      { value: 0, label: "Toutes les voitures" },
+      ...cars.map((car) => ({
+        keywords: `${car.brand} ${car.model} ${car.registrationNumber} ${formatRegistrationNumber(car.registrationNumber)}`,
+        label: `${formatCarName(car.brand, car.model)} (${formatRegistrationNumber(car.registrationNumber)})`,
+        value: car.id,
+      })),
+    ],
+    [cars],
+  );
 
   const rows = useMemo<ContractRow[]>(() =>
     contracts.map((contract) => {
@@ -224,6 +248,12 @@ export function ContractPreview() {
   const safePage = Math.min(page, totalPages);
   const paginatedRows = filteredRows.slice((safePage - 1) * pageSize, safePage * pageSize);
 
+  function handlePageSizeChange(nextPageSize: number) {
+    setPageSize(nextPageSize);
+    writeStoredPageSize(contractsPageSizeKey, nextPageSize);
+    setPage(1);
+  }
+
   function resetFilters() {
     setSearch(""); setStatusFilter("ALL"); setDateFrom(""); setDateTo(""); setCarFilter(0); setPage(1);
   }
@@ -244,14 +274,18 @@ export function ContractPreview() {
     }
   }
 
-  async function handleArchiveContract(contract: Contract) {
-    if (!window.confirm("Archiver ce contrat ? Il disparaîtra de la liste principale et restera restaurable depuis Archive.")) return;
+  async function handleArchiveContract(reason?: string) {
+    if (!archiveContract) return;
     try {
-      await archiveItem("contract", contract.id, "Archivage manuel depuis Contrats");
+      setArchiveLoading(true);
+      await archiveItem({ id: archiveContract.id, reason, type: "contract" });
+      setArchiveContract(null);
       await reload();
-      showToast({ title: "Contrat archivé", type: "success" });
+      showToast({ title: "Contrat archivé avec succès", type: "success" });
     } catch (error) {
-      showToast({ message: getErrorMessage(error), title: "Archivage impossible", type: "error" });
+      showToast({ message: getErrorMessage(error), title: "Impossible d'archiver cet élément", type: "error" });
+    } finally {
+      setArchiveLoading(false);
     }
   }
 
@@ -329,17 +363,13 @@ export function ContractPreview() {
           />
         </div>
 
-        <select
-          className="h-9 rounded-md border border-border bg-white px-3 text-sm dark:bg-slate-900"
-          onChange={(e) => { setStatusFilter(e.target.value as "ALL" | DisplayStatus); setPage(1); }}
+        <SearchableSelect
+          ariaLabel="Filtrer par statut de contrat"
+          className="h-9 rounded-md dark:bg-slate-900"
+          onValueChange={(nextValue) => { setStatusFilter(nextValue as "ALL" | DisplayStatus); setPage(1); }}
+          options={contractStatusFilterOptions}
           value={statusFilter}
-        >
-          <option value="ALL">Tous les status</option>
-          <option value="GENERATED">Généré</option>
-          <option value="PENDING">En attente</option>
-          <option value="SIGNED">Signé</option>
-          <option value="EXPIRED">Expiré</option>
-        </select>
+        />
 
         <div className="flex items-center gap-1">
           <span className="text-sm text-muted-foreground">Date du</span>
@@ -361,18 +391,14 @@ export function ContractPreview() {
           />
         </div>
 
-        <select
-          className="h-9 rounded-md border border-border bg-white px-3 text-sm dark:bg-slate-900"
-          onChange={(e) => { setCarFilter(Number(e.target.value)); setPage(1); }}
+        <SearchableSelect
+          ariaLabel="Filtrer par voiture"
+          className="h-9 rounded-md dark:bg-slate-900"
+          onValueChange={(nextValue) => { setCarFilter(Number(nextValue)); setPage(1); }}
+          options={carFilterOptions}
+          searchPlaceholder="Rechercher une voiture..."
           value={carFilter}
-        >
-          <option value={0}>Toutes les voitures</option>
-          {cars.map((car) => (
-            <option key={car.id} value={car.id}>
-              {formatCarName(car.brand, car.model)}
-            </option>
-          ))}
-        </select>
+        />
 
         <Button onClick={resetFilters} size="sm" type="button" variant="ghost">
           <RotateCcw className="h-3.5 w-3.5" />
@@ -405,7 +431,7 @@ export function ContractPreview() {
                   <ContractTableRow
                     key={row.contract.id}
                     onDownload={() => void downloadContract(row)}
-                    onArchive={() => void handleArchiveContract(row.contract)}
+                    onArchive={() => setArchiveContract(row.contract)}
                     onPrint={() => window.print()}
                     onView={() => setSelected(row.contract)}
                     row={row}
@@ -416,70 +442,14 @@ export function ContractPreview() {
           </table>
         </div>
 
-        {/* Pagination */}
-        <div className="flex items-center justify-between gap-4 border-t border-border px-4 py-3">
-          <span className="text-sm text-muted-foreground">
-            Affichage de {filteredRows.length === 0 ? 0 : (safePage - 1) * pageSize + 1} à{" "}
-            {Math.min(safePage * pageSize, filteredRows.length)} sur {filteredRows.length} contrats
-          </span>
-
-          <div className="flex items-center gap-3">
-            <div className="flex items-center gap-1">
-              <button
-                className="flex h-8 w-8 items-center justify-center rounded-md border border-border text-muted-foreground transition hover:bg-muted disabled:opacity-40"
-                disabled={safePage <= 1}
-                onClick={() => setPage((p) => Math.max(1, p - 1))}
-                type="button"
-              >
-                {"<"}
-              </button>
-              {Array.from({ length: totalPages }, (_, i) => i + 1)
-                .filter((p) => p === 1 || p === totalPages || Math.abs(p - safePage) <= 1)
-                .reduce<(number | "...")[]>((acc, p, i, arr) => {
-                  if (i > 0 && p - (arr[i - 1] as number) > 1) acc.push("...");
-                  acc.push(p);
-                  return acc;
-                }, [])
-                .map((item, i) =>
-                  item === "..." ? (
-                    <span className="px-1 text-muted-foreground" key={`ellipsis-${i}`}>...</span>
-                  ) : (
-                    <button
-                      className={cn(
-                        "flex h-8 w-8 items-center justify-center rounded-md border text-sm font-medium transition",
-                        safePage === item
-                          ? "border-primary bg-primary text-primary-foreground"
-                          : "border-border text-muted-foreground hover:bg-muted",
-                      )}
-                      key={item}
-                      onClick={() => setPage(item as number)}
-                      type="button"
-                    >
-                      {item}
-                    </button>
-                  ),
-                )}
-              <button
-                className="flex h-8 w-8 items-center justify-center rounded-md border border-border text-muted-foreground transition hover:bg-muted disabled:opacity-40"
-                disabled={safePage >= totalPages}
-                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                type="button"
-              >
-                {">"}
-              </button>
-            </div>
-
-            <select
-              className="h-8 rounded-md border border-border bg-white px-2 text-sm dark:bg-slate-900"
-              onChange={(e) => { setPageSize(Number(e.target.value)); setPage(1); }}
-              value={pageSize}
-            >
-              {PAGE_SIZE_OPTIONS.map((size) => (
-                <option key={size} value={size}>{size} / page</option>
-              ))}
-            </select>
-          </div>
-        </div>
+        <AppPagination
+          currentPage={safePage}
+          onPageChange={setPage}
+          onPageSizeChange={handlePageSizeChange}
+          pageSize={pageSize}
+          totalItems={filteredRows.length}
+          totalPages={totalPages}
+        />
       </Card>
 
       {/* Preview dialog */}
@@ -499,11 +469,20 @@ export function ContractPreview() {
           )}
         </DialogContent>
       </Dialog>
+
+      <ArchiveConfirmDialog
+        itemTitle={archiveContract?.contractNumber ?? "Contrat"}
+        itemType="contract"
+        loading={archiveLoading}
+        onCancel={() => !archiveLoading && setArchiveContract(null)}
+        onConfirm={(reason) => void handleArchiveContract(reason)}
+        open={Boolean(archiveContract)}
+      />
     </>
   );
 }
 
-// ─── Stat card ────────────────────────────────────────────────────────────────
+// Stat card
 
 function StatCard({
   color,
@@ -545,7 +524,7 @@ function StatCard({
   );
 }
 
-// ─── Table row ────────────────────────────────────────────────────────────────
+// Table row
 
 function ContractTableRow({
   onArchive,
@@ -650,39 +629,14 @@ function ContractTableRow({
 
       {/* Actions */}
       <td className="px-4 py-3">
-        <div className="flex items-center gap-0.5">
-          <ActionBtn label="Voir contrat" onClick={onView}>
-            <Eye className="h-4 w-4" />
-          </ActionBtn>
-          <ActionBtn label="Télécharger" onClick={onDownload}>
-            <Download className="h-4 w-4" />
-          </ActionBtn>
-          <ActionBtn label="Imprimer" onClick={onPrint}>
-            <Printer className="h-4 w-4" />
-          </ActionBtn>
-          <ActionBtn label="Modifier" onClick={() => {}}>
-            <Pencil className="h-4 w-4" />
-          </ActionBtn>
-          <ActionBtn label="Archiver" onClick={onArchive}>
-            <Archive className="h-4 w-4" />
-          </ActionBtn>
+        <div className="flex items-center gap-2">
+          <ActionIconButton color="blue" icon={Eye} label="Voir contrat" onClick={onView} />
+          <ActionIconButton color="emerald" icon={Download} label="Télécharger" onClick={onDownload} />
+          <ActionIconButton color="slate" icon={Printer} label="Imprimer" onClick={onPrint} />
+          <ActionIconButton color="violet" icon={Archive} label="Archiver" onClick={onArchive} />
         </div>
       </td>
     </tr>
-  );
-}
-
-function ActionBtn({ children, label, onClick }: { children: React.ReactNode; label: string; onClick: () => void }) {
-  return (
-    <button
-      aria-label={label}
-      className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition hover:bg-muted hover:text-foreground"
-      onClick={onClick}
-      title={label}
-      type="button"
-    >
-      {children}
-    </button>
   );
 }
 

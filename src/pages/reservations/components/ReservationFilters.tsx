@@ -1,6 +1,8 @@
+import { useMemo } from "react";
 import { CarFront, RotateCcw, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { SearchableSelect } from "@/components/ui/SearchableSelect";
 import type { Car } from "@/types/car";
 import { getStatusLabel } from "@/components/StatusBadge";
 import { formatCarName, formatRegistrationNumber } from "@/utils/car";
@@ -32,6 +34,21 @@ export function ReservationFilters({
   const update = <Key extends keyof ReservationFiltersState>(key: Key, value: ReservationFiltersState[Key]) => {
     onChange({ ...filters, [key]: value });
   };
+  const statusOptions = useMemo(
+    () => reservationStatuses.map((status) => ({ value: status, label: status === "ALL" ? "Tous les statuts" : getStatusLabel(status) })),
+    [],
+  );
+  const carOptions = useMemo(
+    () => [
+      { value: 0, label: "Toutes les voitures" },
+      ...cars.map((car) => ({
+        keywords: `${car.brand} ${car.model} ${car.registrationNumber} ${formatRegistrationNumber(car.registrationNumber)}`,
+        label: `${formatCarName(car.brand, car.model)} (${formatRegistrationNumber(car.registrationNumber)})`,
+        value: car.id,
+      })),
+    ],
+    [cars],
+  );
 
   return (
     <div className="grid gap-3 rounded-xl border border-border bg-white p-3 shadow-sm dark:border-slate-800 dark:bg-slate-900 xl:grid-cols-[minmax(280px,1fr)_180px_220px_180px_auto]">
@@ -45,32 +62,24 @@ export function ReservationFilters({
         />
       </div>
 
-      <select
-        className="h-11 rounded-lg border border-input bg-white px-3 text-sm outline-none transition-smooth focus:ring-2 focus:ring-ring dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
-        onChange={(event) => update("status", event.target.value as ReservationFilterStatus)}
+      <SearchableSelect
+        ariaLabel="Filtrer par statut"
+        className="h-11 rounded-lg"
+        onValueChange={(nextValue) => update("status", nextValue as ReservationFilterStatus)}
+        options={statusOptions}
         value={filters.status}
-      >
-        {reservationStatuses.map((status) => (
-          <option key={status} value={status}>
-            {status === "ALL" ? "Tous les statuts" : getStatusLabel(status)}
-          </option>
-        ))}
-      </select>
+      />
 
       <div className="relative">
         <CarFront className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-        <select
-          className="h-11 w-full rounded-lg border border-input bg-white px-10 text-sm outline-none transition-smooth focus:ring-2 focus:ring-ring dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
-          onChange={(event) => update("carId", Number(event.target.value))}
+        <SearchableSelect
+          ariaLabel="Filtrer par voiture"
+          className="h-11 rounded-lg pl-10"
+          onValueChange={(nextValue) => update("carId", Number(nextValue))}
+          options={carOptions}
+          searchPlaceholder="Rechercher une voiture..."
           value={filters.carId}
-        >
-          <option value={0}>Toutes les voitures</option>
-          {cars.map((car) => (
-            <option key={car.id} value={car.id}>
-              {formatCarName(car.brand, car.model)} ({formatRegistrationNumber(car.registrationNumber)})
-            </option>
-          ))}
-        </select>
+        />
       </div>
 
       {showDateInput ? (
@@ -81,17 +90,13 @@ export function ReservationFilters({
           value={selectedDate}
         />
       ) : (
-        <select
-          className="h-11 rounded-lg border border-input bg-white px-3 text-sm outline-none transition-smooth focus:ring-2 focus:ring-ring dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
-          onChange={(event) => update("period", event.target.value as ReservationPeriodFilter)}
+        <SearchableSelect
+          ariaLabel="Filtrer par période"
+          className="h-11 rounded-lg"
+          onValueChange={(nextValue) => update("period", nextValue as ReservationPeriodFilter)}
+          options={reservationPeriodOptions}
           value={filters.period}
-        >
-          {reservationPeriodOptions.map((option) => (
-            <option key={option.value} value={option.value}>
-              {option.label}
-            </option>
-          ))}
-        </select>
+        />
       )}
 
       <Button

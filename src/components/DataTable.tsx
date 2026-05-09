@@ -1,4 +1,5 @@
 import { flexRender, getCoreRowModel, useReactTable, type ColumnDef } from "@tanstack/react-table";
+import { AppPagination, type AppPaginationProps } from "@/components/ui/pagination/AppPagination";
 import { cn } from "@/lib/utils";
 
 interface DataTableProps<TData> {
@@ -6,13 +7,14 @@ interface DataTableProps<TData> {
   columns: ColumnDef<TData>[];
   data: TData[];
   emptyLabel?: string;
+  pagination?: AppPaginationProps;
 }
 
-export function DataTable<TData>({ className, columns, data, emptyLabel = "Aucun résultat" }: DataTableProps<TData>) {
+export function DataTable<TData>({ className, columns, data, emptyLabel = "Aucun résultat", pagination }: DataTableProps<TData>) {
   const table = useReactTable({ data, columns, getCoreRowModel: getCoreRowModel() });
 
   return (
-    <div className={cn("overflow-hidden rounded-lg border border-border bg-white", className)}>
+    <div className={cn("overflow-hidden rounded-lg border border-border bg-white dark:border-slate-800 dark:bg-slate-900", className)}>
       <table className="w-full text-left text-sm">
         <thead className="animate-fade-in bg-muted text-xs uppercase text-muted-foreground">
           {table.getHeaderGroups().map((headerGroup) => (
@@ -51,6 +53,7 @@ export function DataTable<TData>({ className, columns, data, emptyLabel = "Aucun
           )}
         </tbody>
       </table>
+      {pagination && <AppPagination {...pagination} />}
     </div>
   );
 }

@@ -1,11 +1,15 @@
 import { invokeCommand } from "@/services/invoke";
-import type { ArchiveItem, ArchiveStats, ArchiveType } from "@/types/archive";
+import type { ArchiveItem, ArchiveStats, ArchiveType, CurrentArchiveType } from "@/types/archive";
 
 type CollectionName = "clients" | "cars" | "reservations" | "payments" | "contracts";
+type CurrentCollectionName = "reservations" | "payments" | "contracts";
+type ArchiveItemInput = {
+  type: CurrentArchiveType;
+  id: number;
+  reason?: string;
+};
 
-const collectionByType: Record<ArchiveType, CollectionName> = {
-  car: "cars",
-  client: "clients",
+const collectionByType: Record<CurrentArchiveType, CurrentCollectionName> = {
   contract: "contracts",
   payment: "payments",
   reservation: "reservations",
@@ -44,10 +48,31 @@ export async function searchArchivedItems(query: string, type: ArchiveType | "al
   });
 }
 
-export async function archiveItem(type: ArchiveType, id: number, reason: string) {
+export async function archiveItem({ id, reason, type }: ArchiveItemInput) {
   if (isTauri()) return invokeCommand<void>("archive_item", { id, itemType: type, reason });
   const collectionName = collectionByType[type];
   const now = new Date().toISOString();
+  if (type === "reservation") {
+    const reservations = readCollection(collectionName);
+    const reservation = reservations.find((item) => Number(item.id) === id);
+    if (!reservation) throw new Error("Réservation introuvable.");
+    if (!isArchivableReservationStatus(String(reservation.status ?? ""))) {
+      throw new Error("Impossible d'archiver une réservation active ou à venir.");
+    }
+    writeCollection(
+      "contracts",
+      readCollection("contracts").map((item) =>
+        Number(item.reservationId) === id
+          ? {
+              ...item,
+              archived: true,
+              archivedAt: now,
+              archivedReason: reason ?? "Archivage manuel",
+            }
+          : item,
+      ),
+    );
+  }
   writeCollection(
     collectionName,
     readCollection(collectionName).map((item) =>
@@ -56,7 +81,7 @@ export async function archiveItem(type: ArchiveType, id: number, reason: string)
             ...item,
             archived: true,
             archivedAt: now,
-            archivedReason: reason,
+            archivedReason: reason ?? "Archivage manuel",
             updatedAt: now,
           }
         : item,
@@ -66,7 +91,7 @@ export async function archiveItem(type: ArchiveType, id: number, reason: string)
 
 export async function restoreArchivedItem(type: ArchiveType, id: number) {
   if (isTauri()) return invokeCommand<void>("restore_archived_item", { id, itemType: type });
-  const collectionName = collectionByType[type];
+  const collectionName = getCurrentCollection(type);
   writeCollection(
     collectionName,
     readCollection(collectionName).map((item) =>
@@ -85,7 +110,7 @@ export async function restoreArchivedItem(type: ArchiveType, id: number) {
 
 export async function permanentlyDeleteArchivedItem(type: ArchiveType, id: number) {
   if (isTauri()) return invokeCommand<void>("permanently_delete_archived_item", { id, itemType: type });
-  const collectionName = collectionByType[type];
+  const collectionName = getCurrentCollection(type);
   writeCollection(
     collectionName,
     readCollection(collectionName).filter((item) => Number(item.id) !== id),
@@ -93,7 +118,7 @@ export async function permanentlyDeleteArchivedItem(type: ArchiveType, id: numbe
 }
 
 function getLocalArchivedItems() {
-  return (Object.keys(typeByCollection) as CollectionName[]).flatMap((collectionName) =>
+  return (["clients", "cars", "reservations", "payments", "contracts"] as CollectionName[]).flatMap((collectionName) =>
     readCollection(collectionName)
       .filter((item) => item.archived === true)
       .map((item) => toArchiveItem(typeByCollection[collectionName], item)),
@@ -146,6 +171,22 @@ function buildStats(items: ArchiveItem[]): ArchiveStats {
     reservations: items.filter((item) => item.type === "reservation").length,
     total: items.length,
   };
+}
+
+function getCurrentCollection(type: ArchiveType): CollectionName {
+  const collectionByArchiveType: Record<ArchiveType, CollectionName> = {
+    car: "cars",
+    client: "clients",
+    contract: "contracts",
+    payment: "payments",
+    reservation: "reservations",
+  };
+
+  return collectionByArchiveType[type];
+}
+
+function isArchivableReservationStatus(status: string) {
+  return ["COMPLETED", "CANCELLED", "TERMINÉE", "ANNULÉE"].includes(status);
 }
 
 function readCollection(collection: CollectionName): Record<string, unknown>[] {

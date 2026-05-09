@@ -3,6 +3,7 @@ import { useForm } from "react-hook-form";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { SearchableSelect } from "@/components/ui/SearchableSelect";
 import type { Car } from "@/types/car";
 import type { Client } from "@/types/client";
 import type { CreateReservationDto, Reservation } from "@/types/reservation";
@@ -33,7 +34,6 @@ type CarAvailability = {
   unavailableStatus: boolean;
 };
 
-const selectClassName = "h-10 w-full rounded-md border border-input bg-white px-3 text-sm";
 const activeReservationStatuses: Reservation["status"][] = ["EN_ATTENTE", "RESERVED", "ONGOING"];
 
 export function ReservationForm({
@@ -117,6 +117,49 @@ export function ReservationForm({
     [availabilityByCar, cars],
   );
 
+  const clientOptions = useMemo(
+    () => [
+      { value: 0, label: "Sélectionner" },
+      ...selectableClients.map((client) => ({
+        disabled: !isClientActive(client) && client.id !== defaultClientId,
+        keywords: `${client.phone ?? ""} ${client.cin ?? ""} ${client.passportNumber ?? ""}`,
+        label: `${normalizeClientName(client.fullName)}${!isClientActive(client) ? " (désactivé)" : ""}`,
+        value: client.id,
+      })),
+    ],
+    [defaultClientId, selectableClients],
+  );
+  const secondClientOptions = useMemo(
+    () => [
+      { value: 0, label: "Aucun" },
+      ...selectableClients.map((client) => ({
+        disabled: client.id === clientId || (!isClientActive(client) && client.id !== defaultSecondClientId),
+        keywords: `${client.phone ?? ""} ${client.cin ?? ""} ${client.passportNumber ?? ""}`,
+        label: `${normalizeClientName(client.fullName)}${!isClientActive(client) ? " (désactivé)" : ""}`,
+        value: client.id,
+      })),
+    ],
+    [clientId, defaultSecondClientId, selectableClients],
+  );
+  const carOptions = useMemo(
+    () => [
+      { value: 0, label: "Sélectionner" },
+      ...sortedCars.map((car) => {
+        const availability = availabilityByCar.get(car.id);
+        const available = availability?.available ?? false;
+        const registrationNumber = formatRegistrationNumber(car.registrationNumber);
+
+        return {
+          disabled: !available,
+          keywords: `${car.brand} ${car.model} ${car.registrationNumber} ${registrationNumber}`,
+          label: `${formatCarName(car.brand, car.model)} - ${registrationNumber} (${available ? "Disponible" : "Non disponible"})`,
+          value: car.id,
+        };
+      }),
+    ],
+    [availabilityByCar, sortedCars],
+  );
+
   const selectedCarAvailability = selectedCar ? availabilityByCar.get(selectedCar.id) : undefined;
 
   useEffect(() => {
@@ -187,78 +230,76 @@ export function ReservationForm({
     <form className="grid gap-4 lg:grid-cols-2" onSubmit={handleSubmit(submitForm)}>
       <div>
         <Label>Client</Label>
-        <select
-          className={selectClassName}
+        <input
+          type="hidden"
           {...register("clientId", {
             valueAsNumber: true,
             validate: (value) => validateClientSelection(Number(value), clients, defaultClientId),
           })}
-        >
-          <option value={0}>Sélectionner</option>
-          {selectableClients.map((client) => (
-            <option disabled={!isClientActive(client) && client.id !== defaultClientId} key={client.id} value={client.id}>
-              {normalizeClientName(client.fullName)}
-              {!isClientActive(client) ? " (désactivé)" : ""}
-            </option>
-          ))}
-        </select>
+        />
+        <SearchableSelect
+          ariaLabel="S?lectionner le client"
+          onValueChange={(nextValue) => {
+            setValue("clientId", Number(nextValue), { shouldDirty: true, shouldValidate: true });
+            void trigger("clientId");
+          }}
+          options={clientOptions}
+          searchPlaceholder="Rechercher un client..."
+          value={clientId}
+        />
         {errors.clientId && <p className="mt-1 text-xs text-destructive">{errors.clientId.message}</p>}
       </div>
 
       <div>
-        <Label>Deuxième conducteur</Label>
-        <select
-          className={selectClassName}
+        <Label>Deuxi?me conducteur</Label>
+        <input
+          type="hidden"
           {...register("secondClientId", {
             valueAsNumber: true,
             validate: (value) => {
               if (!value) return true;
-              if (Number(value) === clientId) return "Le deuxième conducteur doit être différent du client principal.";
+              if (Number(value) === clientId) return "Le deuxi?me conducteur doit ?tre diff?rent du client principal.";
               return validateClientSelection(Number(value), clients, defaultSecondClientId);
             },
           })}
-        >
-          <option value={0}>Aucun</option>
-          {selectableClients.map((client) => (
-            <option
-              disabled={client.id === clientId || (!isClientActive(client) && client.id !== defaultSecondClientId)}
-              key={client.id}
-              value={client.id}
-            >
-              {normalizeClientName(client.fullName)}
-              {!isClientActive(client) ? " (désactivé)" : ""}
-            </option>
-          ))}
-        </select>
+        />
+        <SearchableSelect
+          ariaLabel="S?lectionner le deuxi?me conducteur"
+          onValueChange={(nextValue) => {
+            setValue("secondClientId", Number(nextValue), { shouldDirty: true, shouldValidate: true });
+            void trigger("secondClientId");
+          }}
+          options={secondClientOptions}
+          searchPlaceholder="Rechercher un conducteur..."
+          value={secondClientId}
+        />
         {errors.secondClientId && <p className="mt-1 text-xs text-destructive">{errors.secondClientId.message}</p>}
       </div>
 
       <div>
         <Label>Voiture disponible</Label>
-        <select
-          className={selectClassName}
+        <input
+          type="hidden"
           {...register("carId", {
             valueAsNumber: true,
             validate: (value) => validateCarSelection(Number(value), availabilityByCar),
           })}
-        >
-          <option value={0}>Sélectionner</option>
-          {sortedCars.map((car) => {
-            const availability = availabilityByCar.get(car.id);
-            const available = availability?.available ?? false;
-
-            return (
-              <option disabled={!available} key={car.id} value={car.id}>
-                {formatCarName(car.brand, car.model)} - {formatRegistrationNumber(car.registrationNumber)} ({available ? "Disponible" : "Non disponible"})
-              </option>
-            );
-          })}
-        </select>
+        />
+        <SearchableSelect
+          ariaLabel="S?lectionner une voiture disponible"
+          onValueChange={(nextValue) => {
+            setValue("carId", Number(nextValue), { shouldDirty: true, shouldValidate: true });
+            void trigger("carId");
+          }}
+          options={carOptions}
+          searchPlaceholder="Rechercher une voiture..."
+          value={carId}
+        />
         {selectedCarAvailability?.bookedOnPeriod && (
-          <p className="mt-1 text-xs text-destructive">Cette voiture est déjà réservée sur cette période.</p>
+          <p className="mt-1 text-xs text-destructive">Cette voiture est d?j? r?serv?e sur cette p?riode.</p>
         )}
         {selectedCarAvailability?.technicalVisitExpired && (
-          <p className="mt-1 text-xs text-destructive">La visite technique est expirée pour cette période.</p>
+          <p className="mt-1 text-xs text-destructive">La visite technique est expir?e pour cette p?riode.</p>
         )}
         {selectedCarAvailability?.unavailableStatus && (
           <p className="mt-1 text-xs text-destructive">Cette voiture est en maintenance ou indisponible.</p>

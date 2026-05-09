@@ -18,7 +18,7 @@ import {
   ShieldCheck,
   WalletCards,
 } from "lucide-react";
-import { Pagination } from "@/components/Pagination";
+import { AppPagination } from "@/components/ui/pagination/AppPagination";
 import { getCars } from "@/services/car.service";
 import { getClients } from "@/services/client.service";
 import { getPayments } from "@/services/payment.service";
@@ -32,6 +32,7 @@ import { formatCarName, formatRegistrationNumber } from "@/utils/car";
 import { normalizeClientName } from "@/utils/client";
 import { formatDateTime } from "@/utils/date";
 import { formatMoney } from "@/utils/money";
+import { readStoredPageSize, writeStoredPageSize } from "@/lib/pagination";
 
 type PaymentStatus = "Payé" | "Partiel" | "Non payé";
 type DepositStatus = "Non versée" | "Bloquée" | "Remboursée" | "Retenue";
@@ -82,6 +83,8 @@ type Transaction = {
   method: string;
   type: "Location" | "Caution" | "Remboursement" | "Pénalité";
 };
+
+const paymentDetailsPageSizeKey = "massar-pagination-page-size-payment-details";
 
 export function PaymentDetailsPage() {
   const { paymentId } = useParams();
@@ -483,11 +486,19 @@ export function DepositDetails({ deposit }: { deposit: PaymentDetailData["deposi
 
 export function TransactionsTable({ transactions }: { transactions: Transaction[] }) {
   const [currentPage, setCurrentPage] = useState(1);
-  const [itemsPerPage, setItemsPerPage] = useState(10);
+  const [itemsPerPage, setItemsPerPage] = useState(() => readStoredPageSize(paymentDetailsPageSizeKey));
+  const totalPages = Math.max(1, Math.ceil(transactions.length / itemsPerPage));
+  const safeCurrentPage = Math.min(currentPage, totalPages);
   const paginatedTransactions = useMemo(() => {
-    const startIndex = (currentPage - 1) * itemsPerPage;
+    const startIndex = (safeCurrentPage - 1) * itemsPerPage;
     return transactions.slice(startIndex, startIndex + itemsPerPage);
-  }, [currentPage, itemsPerPage, transactions]);
+  }, [itemsPerPage, safeCurrentPage, transactions]);
+
+  function handlePageSizeChange(nextItemsPerPage: number) {
+    setItemsPerPage(nextItemsPerPage);
+    writeStoredPageSize(paymentDetailsPageSizeKey, nextItemsPerPage);
+    setCurrentPage(1);
+  }
 
   return (
     <article className="rounded-lg border border-border bg-white p-5 shadow-sm transition-smooth hover:-translate-y-0.5 hover:shadow-md">
@@ -544,15 +555,13 @@ export function TransactionsTable({ transactions }: { transactions: Transaction[
         </table>
       </div>
 
-      <Pagination
-        currentPage={currentPage}
-        itemsPerPage={itemsPerPage}
-        onItemsPerPageChange={(nextItemsPerPage) => {
-          setItemsPerPage(nextItemsPerPage);
-          setCurrentPage(1);
-        }}
+      <AppPagination
+        currentPage={safeCurrentPage}
         onPageChange={setCurrentPage}
+        onPageSizeChange={handlePageSizeChange}
+        pageSize={itemsPerPage}
         totalItems={transactions.length}
+        totalPages={totalPages}
       />
     </article>
   );
