@@ -15,6 +15,12 @@ import { formatDateTime, getLocalDateKey, getStartOfWeek } from "@/utils/date";
 import { cn } from "@/lib/utils";
 
 const weekdays = ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"];
+const monthCellHeaderHeight = 44;
+const monthEventHeight = 36;
+const monthEventGap = 6;
+const monthRowBottomPadding = 12;
+const monthMinRowHeight = 128;
+
 
 interface ReservationCalendarViewProps {
   calendarMode: "month" | "week";
@@ -235,7 +241,8 @@ function CalendarGrid({
   reservations: Reservation[];
   selectedDate: string;
 }) {
-  const eventSegments = buildMonthEventSegments(days, reservations);
+  const { rowHeights, segments: eventSegments } = buildMonthEventSegments(days, reservations);
+  const gridTemplateRows = rowHeights.map((height) => `${height}px`).join(" ");
 
   return (
     <div className="overflow-x-auto">
@@ -247,7 +254,10 @@ function CalendarGrid({
             </div>
           ))}
         </div>
-        <div className="relative grid" style={{ gridTemplateColumns: "repeat(7, minmax(0, 1fr))" }}>
+        <div
+          className="relative grid"
+          style={{ gridTemplateColumns: "repeat(7, minmax(0, 1fr))", gridTemplateRows }}
+        >
           {days.map((date) => {
             const dateKey = getLocalDateKey(date);
             const dayReservations = reservations.filter((reservation) => reservationTouchesDate(reservation, dateKey));
@@ -257,7 +267,7 @@ function CalendarGrid({
             return (
               <button
                 className={cn(
-                  "relative min-h-32 border-b border-r border-border bg-white p-2 text-left align-top transition-smooth hover:bg-blue-50/50 dark:border-slate-800 dark:bg-slate-900 dark:hover:bg-blue-950/20",
+                  "relative h-full border-b border-r border-border bg-white p-2 text-left align-top transition-smooth hover:bg-blue-50/50 dark:border-slate-800 dark:bg-slate-900 dark:hover:bg-blue-950/20",
                   !inMonth && "bg-muted/30 text-muted-foreground dark:bg-slate-950/70 dark:text-slate-500",
                   selected && "bg-blue-50 ring-2 ring-inset ring-blue-600 dark:bg-blue-950/30",
                 )}
@@ -265,13 +275,13 @@ function CalendarGrid({
                 onClick={() => onSelectDate(dateKey)}
                 type="button"
               >
-                <div className="mb-2 flex justify-between gap-2">
-                  <span className={cn("text-sm font-semibold", !inMonth && "font-normal")}>
+                <div className="pointer-events-none absolute inset-x-2 bottom-1 z-20 flex items-end justify-between gap-2">
+                  <span className={cn("text-sm font-semibold leading-none", !inMonth && "font-normal")}>
                     {String(date.getDate()).padStart(2, "0")}
                   </span>
                   {dayReservations.length > 2 && (
-                    <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-semibold text-blue-700 dark:bg-blue-950 dark:text-blue-200">
-                      {dayReservations.length}
+                    <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-semibold leading-none text-blue-700 dark:bg-blue-950 dark:text-blue-200">
+                      +{dayReservations.length}
                     </span>
                   )}
                 </div>
@@ -282,7 +292,7 @@ function CalendarGrid({
             className="pointer-events-none absolute inset-0 grid"
             style={{
               gridTemplateColumns: "repeat(7, minmax(0, 1fr))",
-              gridTemplateRows: "repeat(6, minmax(8rem, 1fr))",
+              gridTemplateRows,
             }}
           >
             {eventSegments.map((segment) => (
@@ -296,7 +306,7 @@ function CalendarGrid({
                 style={{
                   gridColumn: `${segment.columnStart} / span ${segment.span}`,
                   gridRow: segment.row + 1,
-                  marginTop: `${34 + segment.lane * 36}px`,
+                  marginTop: `${monthCellHeaderHeight + segment.lane * (monthEventHeight + monthEventGap)}px`,
                 }}
                 type="button"
               >
@@ -375,13 +385,18 @@ type MonthEventSegment = {
   span: number;
 };
 
-function buildMonthEventSegments(days: Date[], reservations: Reservation[]): MonthEventSegment[] {
+type MonthEventLayout = {
+  rowHeights: number[];
+  segments: MonthEventSegment[];
+};
+
+function buildMonthEventSegments(days: Date[], reservations: Reservation[]): MonthEventLayout {
   const rowLanes: Array<Array<Array<{ end: number; start: number }>>> = Array.from({ length: 6 }, () => []);
   const sortedReservations = [...reservations].sort(
     (first, second) => new Date(first.startDate).getTime() - new Date(second.startDate).getTime(),
   );
 
-  return sortedReservations.flatMap((reservation) => {
+  const segments = sortedReservations.flatMap((reservation) => {
     const touchedIndexes = days
       .map((day, index) => (reservationTouchesDate(reservation, getLocalDateKey(day)) ? index : -1))
       .filter((index) => index >= 0);
@@ -411,6 +426,11 @@ function buildMonthEventSegments(days: Date[], reservations: Reservation[]): Mon
 
     return segments;
   });
+
+  return {
+    rowHeights: rowLanes.map((lanes) => getMonthRowHeight(lanes.length)),
+    segments,
+  };
 }
 
 function getMonthEventLane(lanes: Array<Array<{ end: number; start: number }>>, start: number, end: number) {
@@ -423,6 +443,14 @@ function getMonthEventLane(lanes: Array<Array<{ end: number; start: number }>>, 
 
   lanes.push([{ end, start }]);
   return lanes.length - 1;
+}
+
+function getMonthRowHeight(laneCount: number) {
+  if (laneCount === 0) return monthMinRowHeight;
+  return Math.max(
+    monthMinRowHeight,
+    monthCellHeaderHeight + laneCount * monthEventHeight + Math.max(0, laneCount - 1) * monthEventGap + monthRowBottomPadding,
+  );
 }
 
 function formatEventDateSpan(reservation: Reservation) {
