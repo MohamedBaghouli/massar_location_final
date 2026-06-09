@@ -387,7 +387,7 @@ function StatsGrid({
       <StatCard
         description="Somme de toutes les réservations"
         icon={CalendarDays}
-        label="Total dû"
+        label="Total à payer"
         tone="blue"
         value={formatMoney(totals.totalDue)}
       />

@@ -18,6 +18,9 @@ const defaultCollections: Record<CollectionCommand, unknown[]> = {
 };
 const authUsersStorageKey = "rentaldesk:auth-users";
 const authSessionStorageKey = "rentaldesk:auth-session";
+const fallbackSeedVersionStorageKey = "rentaldesk:fallback-seed-version";
+const fallbackSeedVersion = "100-clients-cars-v1";
+const fallbackSeedNotePrefix = "[seed-demo]";
 const devDefaultUser: FallbackAuthUser = {
   fullName: "Dev Admin",
   id: 1,
@@ -89,6 +92,8 @@ function invokeFallback<T>(command: string, args?: Record<string, unknown>): T {
   if (isProtectedCommand(command) && !readAuthSession()) {
     throw new Error("Authentification requise.");
   }
+
+  ensureFallbackDemoData();
 
   if (command === "save_database_copy" || command === "mount_existing_database") {
     throw new Error("Cette action est disponible uniquement dans l'application desktop.");
@@ -297,6 +302,155 @@ function readCollection<T = unknown>(collection: CollectionCommand): T[] {
 
 function writeCollection(collection: CollectionCommand, value: unknown[]) {
   window.localStorage.setItem(storageKey(collection), JSON.stringify(value));
+}
+
+function ensureFallbackDemoData() {
+  if (window.localStorage.getItem(fallbackSeedVersionStorageKey) === fallbackSeedVersion) {
+    return;
+  }
+
+  const clients = readCollection<Record<string, unknown>>("clients");
+  const cars = readCollection<Record<string, unknown>>("cars");
+  const reservations = readCollection<Record<string, unknown>>("reservations");
+  const shouldReplace = clients.length <= 1 && cars.length <= 1 && reservations.length <= 1;
+
+  if (!shouldReplace && clients.length >= 100 && cars.length >= 100 && reservations.length >= 100) {
+    window.localStorage.setItem(fallbackSeedVersionStorageKey, fallbackSeedVersion);
+    return;
+  }
+
+  const demo = buildFallbackDemoData();
+
+  if (shouldReplace) {
+    writeCollection("clients", demo.clients);
+    writeCollection("cars", demo.cars);
+    writeCollection("reservations", demo.reservations);
+    writeCollection("payments", demo.payments);
+    writeCollection("contracts", demo.contracts);
+  } else {
+    writeCollection("clients", mergeSeededCollection(clients, demo.clients, "phone"));
+    writeCollection("cars", mergeSeededCollection(cars, demo.cars, "registrationNumber"));
+    writeCollection("reservations", mergeSeededCollection(reservations, demo.reservations, "notes"));
+    writeCollection("payments", readCollection("payments"));
+    writeCollection("contracts", readCollection("contracts"));
+  }
+
+  window.localStorage.setItem(fallbackSeedVersionStorageKey, fallbackSeedVersion);
+}
+
+function mergeSeededCollection(
+  current: Record<string, unknown>[],
+  seeded: Record<string, unknown>[],
+  uniqueField: string,
+) {
+  const currentKeys = new Set(current.map((item) => item[uniqueField]).filter(Boolean));
+  return [...current, ...seeded.filter((item) => !currentKeys.has(item[uniqueField]))];
+}
+
+function buildFallbackDemoData() {
+  const firstNames = ["Ahmed", "Sami", "Yassine", "Nour", "Mouna", "Leila", "Karim", "Amina", "Walid", "Salma"];
+  const lastNames = ["Ben Ali", "Trabelsi", "Mansouri", "Jebali", "Karray", "Sassi", "Haddad", "Mejri", "Gharbi", "Ayari"];
+  const addresses = ["Tunis", "Ariana", "Ben Arous", "La Marsa", "Sousse", "Monastir", "Sfax", "Nabeul", "Bizerte", "Hammamet"];
+  const carModels = [
+    ["Renault", "Clio", "Essence", "Manuelle", 95],
+    ["Peugeot", "208", "Essence", "Automatique", 110],
+    ["Volkswagen", "Polo", "Diesel", "Manuelle", 120],
+    ["Hyundai", "i20", "Essence", "Automatique", 115],
+    ["Kia", "Picanto", "Essence", "Manuelle", 80],
+    ["Toyota", "Yaris", "Hybride", "Automatique", 130],
+    ["Dacia", "Sandero", "Essence", "Manuelle", 85],
+    ["Seat", "Ibiza", "Diesel", "Manuelle", 105],
+    ["Fiat", "Tipo", "Diesel", "Manuelle", 125],
+    ["Citroen", "C3", "Essence", "Automatique", 105],
+  ] as const;
+
+  const now = new Date();
+  const clients: Record<string, unknown>[] = [];
+  const cars: Record<string, unknown>[] = [];
+  const reservations: Record<string, unknown>[] = [];
+  const payments: Record<string, unknown>[] = [];
+  const contracts: Record<string, unknown>[] = [];
+
+  for (let index = 0; index < 100; index += 1) {
+    const number = index + 1;
+    const clientId = 900000 + number;
+    const carId = 910000 + number;
+    const reservationId = 920000 + number;
+    const firstName = firstNames[index % firstNames.length];
+    const lastName = lastNames[Math.floor(index / firstNames.length) % lastNames.length];
+    const [brand, model, fuelType, transmission, dailyPrice] = carModels[index % carModels.length];
+    const status = index % 4 === 0 ? "ONGOING" : index % 4 === 1 ? "RESERVED" : index % 4 === 2 ? "COMPLETED" : "EN_ATTENTE";
+    const startDate = status === "ONGOING" ? toIsoDateOffset(now, -2) : toIsoDateOffset(now, index - 30);
+    const duration = 2 + (index % 6);
+    const endDate = toIsoDateOffset(new Date(startDate), duration);
+    const createdAt = toIsoDateOffset(now, -number);
+
+    clients.push({
+      address: `${12 + index} Rue Massar, ${addresses[index % addresses.length]}`,
+      archived: false,
+      birthDate: `${1975 + (index % 25)}-0${(index % 9) + 1}-12`,
+      birthPlace: addresses[(index + 3) % addresses.length],
+      cin: `12${padNumber(number, 6)}`,
+      cinIssueDate: `20${12 + (index % 10)}-0${(index % 9) + 1}-10`,
+      cinIssuePlace: addresses[index % addresses.length],
+      createdAt,
+      drivingLicense: `DL${padNumber(number, 7)}`,
+      drivingLicenseDate: `20${10 + (index % 10)}-0${(index % 9) + 1}-15`,
+      fullName: `${firstName} ${lastName} ${padNumber(number)}`,
+      id: clientId,
+      isActive: index % 17 !== 0,
+      nationality: "Tunisienne",
+      passportNumber: `P${padNumber(number, 7)}`,
+      phone: `+216 20 ${padNumber(number, 3)} ${padNumber(100 + number, 3)}`,
+      updatedAt: createdAt,
+    });
+
+    cars.push({
+      archived: false,
+      brand,
+      createdAt,
+      dailyPrice,
+      fuelType,
+      id: carId,
+      imageUrl: null,
+      insuranceExpiryDate: toIsoDateOffset(now, 180 + index),
+      mileage: 25000 + index * 730,
+      model: `${model} ${2020 + (index % 5)}`,
+      registrationNumber: `LM-${padNumber(number)}-TN`,
+      status: status === "ONGOING" ? "RENTED" : "AVAILABLE",
+      technicalVisitExpiryDate: toIsoDateOffset(now, 120 + index),
+      transmission,
+      updatedAt: createdAt,
+      year: 2018 + (index % 7),
+    });
+
+    reservations.push({
+      archived: false,
+      carId,
+      clientId,
+      createdAt,
+      dailyPrice,
+      depositAmount: Math.round(Number(dailyPrice) * 1.5),
+      endDate,
+      id: reservationId,
+      notes: `${fallbackSeedNotePrefix} Reservation demo ${padNumber(number)}`,
+      pickupFuelLevel: status === "RESERVED" || status === "EN_ATTENTE" ? null : "Plein",
+      pickupMileage: status === "RESERVED" || status === "EN_ATTENTE" ? null : 25000 + index * 730,
+      returnFuelLevel: status === "COMPLETED" ? "Demi" : null,
+      returnMileage: status === "COMPLETED" ? 25000 + index * 730 + duration * 140 : null,
+      secondClientId: null,
+      startDate,
+      status,
+      totalPrice: Number(dailyPrice) * duration,
+      updatedAt: createdAt,
+    });
+  }
+
+  return { cars, clients, contracts, payments, reservations };
+}
+
+function padNumber(value: number, size = 3) {
+  return String(value).padStart(size, "0");
 }
 
 function storageKey(collection: CollectionCommand) {

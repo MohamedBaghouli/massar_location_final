@@ -251,20 +251,20 @@ export function ReservationForm({
       </div>
 
       <div>
-        <Label>Deuxi?me conducteur</Label>
+        <Label>Deuxième conducteur</Label>
         <input
           type="hidden"
           {...register("secondClientId", {
             valueAsNumber: true,
             validate: (value) => {
               if (!value) return true;
-              if (Number(value) === clientId) return "Le deuxi?me conducteur doit ?tre diff?rent du client principal.";
+              if (Number(value) === clientId) return "Le deuxième conducteur doit être différent du client principal.";
               return validateClientSelection(Number(value), clients, defaultSecondClientId);
             },
           })}
         />
         <SearchableSelect
-          ariaLabel="S?lectionner le deuxi?me conducteur"
+          ariaLabel="Sélectionner le deuxième conducteur"
           onValueChange={(nextValue) => {
             setValue("secondClientId", Number(nextValue), { shouldDirty: true, shouldValidate: true });
             void trigger("secondClientId");
